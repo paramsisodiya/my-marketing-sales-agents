@@ -8,6 +8,8 @@ import {
   Save,
   HelpCircle,
   ExternalLink,
+  AlertCircle,
+  KeyRound,
 } from 'lucide-react';
 import { apiService } from '../../services/api.service';
 
@@ -24,21 +26,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const [provider, setProvider] = useState<'mock' | 'gemini' | 'ollama'>('mock');
   const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [hasStoredKey, setHasStoredKey] = useState(false);
+  const [maskedPreview, setMaskedPreview] = useState('');
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState('http://localhost:11434');
   const [ollamaModel, setOllamaModel] = useState('llama3:8b');
   const [isSaving, setIsSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
-      apiService.getSettings().then(settings => {
-        if (settings) {
-          setProvider(settings.aiProvider || 'mock');
-          setGeminiApiKey(settings.geminiApiKey || '');
-          setOllamaBaseUrl(settings.ollamaBaseUrl || 'http://localhost:11434');
-          setOllamaModel(settings.ollamaModel || 'llama3:8b');
-        }
-      });
+      setErrorMessage(null);
+      apiService.getSettings()
+        .then(settings => {
+          if (settings) {
+            setProvider(settings.aiProvider || 'mock');
+            setHasStoredKey(Boolean(settings.hasGeminiKey));
+            setMaskedPreview(settings.maskedGeminiKey || settings.geminiApiKey || '');
+            setGeminiApiKey(settings.geminiApiKey || '');
+            setOllamaBaseUrl(settings.ollamaBaseUrl || 'http://localhost:11434');
+            setOllamaModel(settings.ollamaModel || 'llama3:8b');
+          }
+        })
+        .catch(err => {
+          console.warn('Could not load remote settings, using local defaults:', err);
+        });
     }
   }, [isOpen]);
 
@@ -47,21 +59,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
+    setErrorMessage(null);
+
     try {
+      // Validate key if switching to Gemini and no key is configured
+      if (provider === 'gemini' && !hasStoredKey && (!geminiApiKey || geminiApiKey.trim().length === 0)) {
+        throw new Error('Please enter a valid Google Gemini API key to activate Gemini provider.');
+      }
+
       await apiService.updateSettings({
         aiProvider: provider,
-        geminiApiKey,
-        ollamaBaseUrl,
-        ollamaModel,
+        geminiApiKey: geminiApiKey.trim(),
+        ollamaBaseUrl: ollamaBaseUrl.trim(),
+        ollamaModel: ollamaModel.trim(),
       });
+
       setSavedSuccess(true);
       setTimeout(() => {
         setSavedSuccess(false);
         onSettingsSaved();
         onClose();
-      }, 1000);
+      }, 900);
     } catch (err: any) {
-      alert(`Error saving settings: ${err.message}`);
+      const msg = err?.message || 'Failed to save settings. Please try again.';
+      setErrorMessage(msg);
     } finally {
       setIsSaving(false);
     }
@@ -87,6 +108,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </button>
         </div>
 
+        {errorMessage && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '10px 14px',
+            backgroundColor: 'rgba(239, 68, 68, 0.12)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            borderRadius: 'var(--radius-md)',
+            color: '#ef4444',
+            fontSize: '12.5px',
+            marginBottom: '16px',
+          }}>
+            <AlertCircle size={16} style={{ flexShrink: 0 }} />
+            <span>{errorMessage}</span>
+          </div>
+        )}
+
         <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
           {/* Provider Selection */}
           <div>
@@ -103,6 +142,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   backgroundColor: provider === 'mock' ? 'rgba(16, 185, 129, 0.12)' : 'rgba(255,255,255,0.02)',
                   cursor: 'pointer',
                   textAlign: 'center',
+                  transition: 'all 0.15s ease',
                 }}
               >
                 <div style={{ fontWeight: 700, color: '#ffffff', fontSize: '13px' }}>₹0 Offline Mock</div>
@@ -118,6 +158,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   backgroundColor: provider === 'gemini' ? 'rgba(99, 102, 241, 0.12)' : 'rgba(255,255,255,0.02)',
                   cursor: 'pointer',
                   textAlign: 'center',
+                  transition: 'all 0.15s ease',
                 }}
               >
                 <div style={{ fontWeight: 700, color: '#ffffff', fontSize: '13px' }}>Google Gemini</div>
@@ -133,6 +174,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   backgroundColor: provider === 'ollama' ? 'rgba(139, 92, 246, 0.12)' : 'rgba(255,255,255,0.02)',
                   cursor: 'pointer',
                   textAlign: 'center',
+                  transition: 'all 0.15s ease',
                 }}
               >
                 <div style={{ fontWeight: 700, color: '#ffffff', fontSize: '13px' }}>Local Ollama</div>
@@ -144,18 +186,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* Conditional Provider Settings */}
           {provider === 'gemini' && (
             <div className="animate-fade-in">
-              <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                Gemini API Key (Google AI Studio Free Tier)
-              </label>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                <label style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Gemini API Key (Google AI Studio Free Tier)
+                </label>
+                {hasStoredKey && (
+                  <span style={{ fontSize: '11px', color: 'var(--emerald)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                    <ShieldCheck size={12} /> Key Configured
+                  </span>
+                )}
+              </div>
               <input
                 type="password"
                 className="form-input"
-                placeholder="AIzaSy..."
+                placeholder={hasStoredKey && maskedPreview ? maskedPreview : "AIzaSy..."}
                 value={geminiApiKey}
                 onChange={(e) => setGeminiApiKey(e.target.value)}
+                autoComplete="off"
               />
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                You can obtain a 100% free API key from Google AI Studio.
+                {hasStoredKey && !geminiApiKey
+                  ? 'Key is saved securely. Leave blank to keep existing key, or type a new key to update.'
+                  : 'You can obtain a 100% free API key from Google AI Studio.'}
               </div>
             </div>
           )}

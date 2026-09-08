@@ -27,7 +27,13 @@ export class DatabaseService {
   private data: IDatabaseSchema;
 
   private constructor(customPath?: string) {
-    this.filePath = customPath || path.resolve(process.cwd(), 'primesoul_data.json');
+    if (customPath) {
+      this.filePath = customPath;
+    } else if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+      this.filePath = path.resolve('/tmp', 'primesoul_data.json');
+    } else {
+      this.filePath = path.resolve(process.cwd(), 'primesoul_data.json');
+    }
     this.data = this.loadData();
   }
 
@@ -39,6 +45,7 @@ export class DatabaseService {
   }
 
   private loadData(): IDatabaseSchema {
+    // 1. Try primary file path
     if (fs.existsSync(this.filePath)) {
       try {
         const raw = fs.readFileSync(this.filePath, 'utf-8');
@@ -46,7 +53,21 @@ export class DatabaseService {
         if (!parsed.researchRuns) parsed.researchRuns = [];
         return parsed;
       } catch (err) {
-        console.error('Failed to parse primesoul_data.json, initializing defaults:', err);
+        console.error('Failed to parse primary primesoul_data.json:', err);
+      }
+    }
+
+    // 2. If in serverless and /tmp file not found, try reading from bundled project root
+    const rootPath = path.resolve(process.cwd(), 'primesoul_data.json');
+    if (this.filePath !== rootPath && fs.existsSync(rootPath)) {
+      try {
+        const raw = fs.readFileSync(rootPath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (!parsed.researchRuns) parsed.researchRuns = [];
+        this.saveData(parsed);
+        return parsed;
+      } catch (err) {
+        console.error('Failed to parse bundled root primesoul_data.json:', err);
       }
     }
 
@@ -73,7 +94,8 @@ export class DatabaseService {
     try {
       fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2), 'utf-8');
     } catch (err) {
-      console.error('Failed to write to primesoul_data.json:', err);
+      // In serverless / read-only filesystem, in-memory state remains active
+      console.warn('Notice: Could not persist primesoul_data.json to disk (running in-memory):', err);
     }
   }
 
@@ -295,9 +317,53 @@ export class DatabaseService {
     return item;
   }
 
-  // --- Settings ---
-  public getSettings() {
+  // --- Settings & Provider Configuration ---
+  public getSettings(): IDatabaseSchema['settings'] & { hasGeminiKey: boolean; maskedGeminiKey: string } {
+    const rawKey = this.data.settings.geminiApiKey || '';
+    const hasGeminiKey = Boolean(rawKey && rawKey.trim().length > 0);
+    const maskedGeminiKey = hasGeminiKey
+      ? (rawKey.length > 8 ? `${rawKey.substring(0, 6)}${'•'.repeat(Math.min(24, Math.max(12, rawKey.length - 10)))}${rawKey.substring(rawKey.length - 4)}` : '••••••••••••')
+      : '';
+
+    return {
+      ...this.data.settings,
+      geminiApiKey: maskedGeminiKey,
+      hasGeminiKey,
+      maskedGeminiKey,
+    };
+  }
+
+  public getRawSettings(): IDatabaseSchema['settings'] {
     return this.data.settings;
+  }
+
+  public updateSettings(settings: Partial<IDatabaseSchema['settings']>): IDatabaseSchema['settings'] & { hasGeminiKey: boolean; maskedGeminiKey: string } {
+    const current = this.data.settings;
+    const newSettings: IDatabaseSchema['settings'] = { ...current };
+
+    if (settings.aiProvider) {
+      newSettings.aiProvider = settings.aiProvider;
+    }
+    if (settings.ollamaBaseUrl !== undefined) {
+      newSettings.ollamaBaseUrl = settings.ollamaBaseUrl;
+    }
+    if (settings.ollamaModel !== undefined) {
+      newSettings.ollamaModel = settings.ollamaModel;
+    }
+
+    if (settings.geminiApiKey !== undefined) {
+      const trimmed = settings.geminiApiKey.trim();
+      // If client sends back masked key or asterisks/bullets, preserve the current real key
+      if (trimmed.includes('•') || trimmed.includes('*')) {
+        // preserve current.geminiApiKey
+      } else {
+        newSettings.geminiApiKey = trimmed;
+      }
+    }
+
+    this.data.settings = newSettings;
+    this.saveData();
+    return this.getSettings();
   }
 
   public resetData(): void {

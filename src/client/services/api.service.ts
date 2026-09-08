@@ -6,57 +6,81 @@ import { IKnowledgeDocument } from '../../core/types/knowledge.types';
 
 const API_BASE = '/api';
 
+/**
+ * Robust JSON request handler with content-type verification
+ * and informative error messages (never throws raw JSON syntax errors).
+ */
+async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+  try {
+    const res = await fetch(url, options);
+    const contentType = res.headers.get('content-type') || '';
+
+    if (contentType.includes('application/json')) {
+      const data = await res.json();
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || data.message || `Request failed with status ${res.status}`);
+      }
+      return data as T;
+    }
+
+    // Non-JSON response (e.g., Vercel routing 404 HTML, gateway timeout, etc.)
+    const text = await res.text();
+    if (res.status === 404) {
+      throw new Error(`API endpoint not found: ${url} (Status 404). Please ensure serverless functions are deployed.`);
+    }
+    const snippet = text.replace(/<[^>]*>?/gm, '').trim().substring(0, 120);
+    throw new Error(`Server returned HTTP ${res.status}: ${snippet || res.statusText || 'Non-JSON response'}`);
+  } catch (err: any) {
+    if (err.message && !err.message.includes('Unexpected token')) {
+      throw err;
+    }
+    throw new Error(`API Error: ${err.message || 'Unable to connect to server'}`);
+  }
+}
+
 export const apiService = {
   // Agents
   async getAgents(): Promise<IAgentMetadata[]> {
-    const res = await fetch(`${API_BASE}/agents`);
-    const data = await res.json();
-    return data.agents;
+    const data = await request<{ success: boolean; agents: IAgentMetadata[] }>('/agents');
+    return data.agents || [];
   },
 
   async executeAgent(agentId: string, payload: { task: string; objective: string; context?: any; leadData?: any }): Promise<IAgentOutput> {
-    const res = await fetch(`${API_BASE}/agents/${agentId}/execute`, {
+    const data = await request<{ success: boolean; output: IAgentOutput }>(`/agents/${agentId}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error);
     return data.output;
   },
 
   // Workflows
   async getWorkflows(): Promise<IWorkflowDefinition[]> {
-    const res = await fetch(`${API_BASE}/workflows`);
-    const data = await res.json();
-    return data.workflows;
+    const data = await request<{ success: boolean; workflows: IWorkflowDefinition[] }>('/workflows');
+    return data.workflows || [];
   },
 
   async getWorkflowInstances(): Promise<IWorkflowInstance[]> {
-    const res = await fetch(`${API_BASE}/workflows/instances`);
-    const data = await res.json();
-    return data.instances;
+    const data = await request<{ success: boolean; instances: IWorkflowInstance[] }>('/workflows/instances');
+    return data.instances || [];
   },
 
   async startWorkflow(workflowId: string, leadId?: string, context?: any): Promise<IWorkflowInstance> {
-    const res = await fetch(`${API_BASE}/workflows/start`, {
+    const data = await request<{ success: boolean; instance: IWorkflowInstance }>('/workflows/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workflowId, leadId, context }),
     });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error);
     return data.instance;
   },
 
   async resumeWorkflow(instanceId: string, approvalId: string, approved: boolean, feedback?: string): Promise<IWorkflowInstance> {
-    const res = await fetch(`${API_BASE}/workflows/instances/${instanceId}/resume`, {
+    const data = await request<{ success: boolean; instance: IWorkflowInstance }>(`/workflows/instances/${instanceId}/resume`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ approvalId, approved, feedback }),
     });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error);
     return data.instance;
   },
 
@@ -68,120 +92,139 @@ export const apiService = {
     if (filter?.outreachStatus) params.set('outreachStatus', filter.outreachStatus);
     if (filter?.searchQuery) params.set('search', filter.searchQuery);
 
-    const res = await fetch(`${API_BASE}/leads?${params.toString()}`);
-    const data = await res.json();
-    return data.leads;
+    const qs = params.toString();
+    const endpoint = qs ? `/leads?${qs}` : '/leads';
+    const data = await request<{ success: boolean; leads: ILead[] }>(endpoint);
+    return data.leads || [];
   },
 
   async saveLead(lead: Partial<ILead>): Promise<ILead> {
-    const res = await fetch(`${API_BASE}/leads`, {
+    const data = await request<{ success: boolean; lead: ILead }>('/leads', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(lead),
     });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error);
     return data.lead;
   },
 
   async deleteLead(id: string): Promise<boolean> {
-    const res = await fetch(`${API_BASE}/leads/${id}`, { method: 'DELETE' });
-    const data = await res.json();
-    return data.success;
+    const data = await request<{ success: boolean }>(`/leads/${id}`, { method: 'DELETE' });
+    return Boolean(data.success);
   },
 
   // Approvals
   async getApprovals(status?: string): Promise<IApprovalItem[]> {
-    const url = status ? `${API_BASE}/approvals?status=${status}` : `${API_BASE}/approvals`;
-    const res = await fetch(url);
-    const data = await res.json();
-    return data.approvals;
+    const endpoint = status ? `/approvals?status=${status}` : '/approvals';
+    const data = await request<{ success: boolean; approvals: IApprovalItem[] }>(endpoint);
+    return data.approvals || [];
   },
 
   async actionApproval(id: string, action: 'APPROVE' | 'REVISE' | 'REJECT', comment?: string, modifiedContent?: string): Promise<IApprovalItem> {
-    const res = await fetch(`${API_BASE}/approvals/${id}/action`, {
+    const data = await request<{ success: boolean; approval: IApprovalItem }>(`/approvals/${id}/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, comment, modifiedContent }),
     });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error);
     return data.approval;
   },
 
   // Knowledge
   async getKnowledgeDocs(): Promise<IKnowledgeDocument[]> {
-    const res = await fetch(`${API_BASE}/knowledge`);
-    const data = await res.json();
-    return data.documents;
+    const data = await request<{ success: boolean; documents: IKnowledgeDocument[] }>('/knowledge');
+    return data.documents || [];
   },
 
   async saveKnowledgeDoc(slug: string, content: string): Promise<IKnowledgeDocument> {
-    const res = await fetch(`${API_BASE}/knowledge/${slug}`, {
+    const data = await request<{ success: boolean; document: IKnowledgeDocument }>(`/knowledge/${slug}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content }),
     });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error);
     return data.document;
   },
 
   // Logs
   async getLogs(limit: number = 100): Promise<any[]> {
-    const res = await fetch(`${API_BASE}/logs?limit=${limit}`);
-    const data = await res.json();
-    return data.logs;
+    const data = await request<{ success: boolean; logs: any[] }>(`/logs?limit=${limit}`);
+    return data.logs || [];
   },
 
-  // Settings
+  // Settings & Provider Configuration
   async getSettings(): Promise<any> {
-    const res = await fetch(`${API_BASE}/settings`);
-    const data = await res.json();
-    return data.settings;
+    try {
+      const data = await request<{ success: boolean; settings: any }>('/settings');
+      if (data && data.settings) {
+        try {
+          localStorage.setItem('primesoul_settings_cache', JSON.stringify({
+            aiProvider: data.settings.aiProvider,
+            ollamaBaseUrl: data.settings.ollamaBaseUrl,
+            ollamaModel: data.settings.ollamaModel,
+            hasGeminiKey: data.settings.hasGeminiKey,
+            maskedGeminiKey: data.settings.maskedGeminiKey || data.settings.geminiApiKey,
+          }));
+        } catch {}
+        return data.settings;
+      }
+      return data;
+    } catch (err) {
+      // Fallback to localStorage cache for offline / cold-start resilience
+      try {
+        const cached = localStorage.getItem('primesoul_settings_cache');
+        if (cached) {
+          return JSON.parse(cached);
+        }
+      } catch {}
+      throw err;
+    }
   },
 
   async updateSettings(settings: any): Promise<any> {
-    const res = await fetch(`${API_BASE}/settings`, {
+    const data = await request<{ success: boolean; settings: any }>('/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
     });
-    const data = await res.json();
-    return data.settings;
+    if (data && data.settings) {
+      try {
+        localStorage.setItem('primesoul_settings_cache', JSON.stringify({
+          aiProvider: data.settings.aiProvider,
+          ollamaBaseUrl: data.settings.ollamaBaseUrl,
+          ollamaModel: data.settings.ollamaModel,
+          hasGeminiKey: data.settings.hasGeminiKey,
+          maskedGeminiKey: data.settings.maskedGeminiKey || data.settings.geminiApiKey,
+        }));
+      } catch {}
+      return data.settings;
+    }
+    return data;
   },
 
   // Tools & Lead Intelligence Research
   async analyzeWebsite(url: string, businessName?: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/tools/web-analyze`, {
+    const data = await request<any>('/tools/web-analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url, businessName }),
     });
-    return res.json();
+    return data;
   },
 
   async runResearch(payload: { url?: string; businessName?: string; location?: string; leadId?: string }): Promise<any> {
-    const res = await fetch(`${API_BASE}/research/run`, {
+    const data = await request<any>('/research/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error);
     return data;
   },
 
   async getResearchRuns(leadId: string): Promise<any[]> {
-    const res = await fetch(`${API_BASE}/research/runs/${leadId}`);
-    const data = await res.json();
+    const data = await request<{ success: boolean; runs: any[] }>(`/research/runs/${leadId}`);
     return data.runs || [];
   },
 
   async getResearchProfile(leadId: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/research/profile/${leadId}`);
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error);
+    const data = await request<{ success: boolean; profile: any }>(`/research/profile/${leadId}`);
     return data.profile;
   }
 };
