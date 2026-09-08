@@ -1,4 +1,4 @@
-import { AgentRegistry } from '../src/core/agents/agent.registry';
+import { AgentRegistry } from '../core/agents/agent.registry';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {

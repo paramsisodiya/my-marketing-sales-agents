@@ -2395,7 +2395,7 @@ var WorkflowEngine = class _WorkflowEngine {
   }
 };
 
-// api/workflows.ts
+// src/api/workflows.ts
 init_workflow_definitions();
 function sendJson(res, status, data) {
   if (typeof res.status === "function" && typeof res.json === "function") {

@@ -1410,7 +1410,7 @@ var AgentRegistry = class {
   }
 };
 
-// api/agents.ts
+// src/api/agents.ts
 function sendJson(res, status, data) {
   if (typeof res.status === "function" && typeof res.json === "function") {
     return res.status(status).json(data);

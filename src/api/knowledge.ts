@@ -1,6 +1,5 @@
-import { DatabaseService } from '../src/core/database/db.service';
-import { WorkflowEngine } from '../src/core/workflows/workflow.engine';
-import { WORKFLOW_DEFINITIONS } from '../src/core/workflows/workflow.definitions';
+import { KnowledgeService } from '../core/knowledge/knowledge.service';
+import { LoggerService } from '../core/observability/logger.service';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {
@@ -25,13 +24,19 @@ export default async function handler(req: any, res: any) {
     return res.end();
   }
 
-  const db = DatabaseService.getInstance();
-  const workflowEngine = WorkflowEngine.getInstance();
+  const knowledgeService = new KnowledgeService();
+  const logger = LoggerService.getInstance();
 
   if (req.method === 'GET') {
     try {
-      const instances = db.getWorkflows();
-      return sendJson(res, 200, { success: true, workflows: WORKFLOW_DEFINITIONS, instances });
+      const slug = req.query?.slug as string;
+      if (slug) {
+        const doc = knowledgeService.getBySlug(slug);
+        if (!doc) return sendJson(res, 404, { success: false, error: 'Document not found' });
+        return sendJson(res, 200, { success: true, document: doc });
+      }
+      const docs = knowledgeService.getAll();
+      return sendJson(res, 200, { success: true, documents: docs });
     } catch (err: any) {
       return sendJson(res, 500, { success: false, error: err.message });
     }
@@ -39,31 +44,21 @@ export default async function handler(req: any, res: any) {
 
   if (req.method === 'POST') {
     try {
+      const slug = (req.query?.slug || req.body?.slug) as string;
       let body = req.body;
       if (typeof body === 'string') {
         try { body = JSON.parse(body); } catch { body = {}; }
       }
       body = body || {};
-      const { workflowId, leadId, context } = body;
-      const def = WORKFLOW_DEFINITIONS.find(w => w.id === workflowId);
+      const { content } = body;
 
-      if (!def) {
-        return sendJson(res, 404, { success: false, error: `Workflow definition ${workflowId} not found` });
+      if (!slug || !content) {
+        return sendJson(res, 400, { success: false, error: 'Slug and content required' });
       }
 
-      const initialContext = context || {};
-      if (leadId) {
-        const lead = db.getLeadById(leadId);
-        if (lead) {
-          initialContext.businessName = lead.businessName;
-          initialContext.industry = lead.industry;
-          initialContext.website = lead.website;
-          initialContext.location = lead.location;
-        }
-      }
-
-      const instance = await workflowEngine.startWorkflow(def, initialContext, leadId);
-      return sendJson(res, 200, { success: true, instance });
+      const saved = knowledgeService.saveDocument(slug, content);
+      logger.info(`Knowledge document updated: ${saved.title}`);
+      return sendJson(res, 200, { success: true, document: saved });
     } catch (err: any) {
       return sendJson(res, 500, { success: false, error: err.message });
     }

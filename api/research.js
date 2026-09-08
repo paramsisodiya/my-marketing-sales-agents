@@ -2000,7 +2000,7 @@ var LeadIntelligenceService = class _LeadIntelligenceService {
   }
 };
 
-// api/research.ts
+// src/api/research.ts
 function sendJson(res, status, data) {
   if (typeof res.status === "function" && typeof res.json === "function") {
     return res.status(status).json(data);

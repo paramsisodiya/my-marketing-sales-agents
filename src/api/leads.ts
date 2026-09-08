@@ -1,6 +1,5 @@
-import { DatabaseService } from '../src/core/database/db.service';
-import { WorkflowEngine } from '../src/core/workflows/workflow.engine';
-import { LoggerService } from '../src/core/observability/logger.service';
+import { DatabaseService } from '../core/database/db.service';
+import { LoggerService } from '../core/observability/logger.service';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {
@@ -26,14 +25,18 @@ export default async function handler(req: any, res: any) {
   }
 
   const db = DatabaseService.getInstance();
-  const workflowEngine = WorkflowEngine.getInstance();
   const logger = LoggerService.getInstance();
 
   if (req.method === 'GET') {
     try {
-      const status = req.query?.status as any;
-      const approvals = db.getApprovals(status);
-      return sendJson(res, 200, { success: true, count: approvals.length, approvals });
+      const filter: any = {};
+      if (req.query?.industry) filter.industry = String(req.query.industry);
+      if (req.query?.qualificationStatus) filter.qualificationStatus = String(req.query.qualificationStatus);
+      if (req.query?.outreachStatus) filter.outreachStatus = String(req.query.outreachStatus);
+      if (req.query?.search) filter.searchQuery = String(req.query.search);
+
+      const leads = db.getLeads(filter);
+      return sendJson(res, 200, { success: true, count: leads.length, leads });
     } catch (err: any) {
       return sendJson(res, 500, { success: false, error: err.message });
     }
@@ -41,38 +44,25 @@ export default async function handler(req: any, res: any) {
 
   if (req.method === 'POST') {
     try {
-      const id = req.query?.id || req.body?.id;
       let body = req.body;
       if (typeof body === 'string') {
         try { body = JSON.parse(body); } catch { body = {}; }
       }
       body = body || {};
-      const { action, comment, modifiedContent } = body;
+      const saved = db.saveLead(body);
+      logger.info(`Lead saved: ${saved.businessName} (${saved.id})`);
+      return sendJson(res, 200, { success: true, lead: saved });
+    } catch (err: any) {
+      return sendJson(res, 400, { success: false, error: err.message });
+    }
+  }
 
-      const statusMap: any = {
-        APPROVE: 'APPROVED',
-        REVISE: 'REVISED',
-        REJECT: 'REJECTED',
-      };
-
-      const targetStatus = statusMap[action] || 'APPROVED';
-      const updated = db.updateApprovalStatus(id, targetStatus, comment, modifiedContent);
-
-      if (!updated) {
-        return sendJson(res, 404, { success: false, error: 'Approval item not found' });
-      }
-
-      if (updated.workflowInstanceId) {
-        await workflowEngine.resumeWorkflowAfterApproval(
-          updated.workflowInstanceId,
-          updated.id,
-          action === 'APPROVE',
-          comment
-        );
-      }
-
-      logger.info(`Approval item ${updated.id} status updated to ${targetStatus}`);
-      return sendJson(res, 200, { success: true, approval: updated });
+  if (req.method === 'DELETE') {
+    try {
+      const id = req.query?.id as string;
+      if (!id) return sendJson(res, 400, { success: false, error: 'Lead ID required' });
+      const ok = db.deleteLead(id);
+      return sendJson(res, 200, { success: ok });
     } catch (err: any) {
       return sendJson(res, 500, { success: false, error: err.message });
     }

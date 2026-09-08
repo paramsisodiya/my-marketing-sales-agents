@@ -70,7 +70,7 @@ var LoggerService = class _LoggerService {
   }
 };
 
-// api/logs.ts
+// src/api/logs.ts
 function sendJson(res, status, data) {
   if (typeof res.status === "function" && typeof res.json === "function") {
     return res.status(status).json(data);

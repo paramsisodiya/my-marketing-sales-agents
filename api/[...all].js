@@ -28816,7 +28816,7 @@ app.use((err, _req, res, next) => {
 });
 var app_default = app;
 
-// api/[...all].ts
+// src/api/[...all].ts
 function handler(req, res) {
   return app_default(req, res);
 }

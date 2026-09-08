@@ -1,6 +1,6 @@
-import { DatabaseService } from '../src/core/database/db.service';
-import { LlmFactory } from '../src/core/llm/llm.factory';
-import { LoggerService } from '../src/core/observability/logger.service';
+import { DatabaseService } from '../core/database/db.service';
+import { LlmFactory } from '../core/llm/llm.factory';
+import { LoggerService } from '../core/observability/logger.service';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {

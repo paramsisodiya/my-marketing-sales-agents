@@ -1,5 +1,6 @@
-import { DatabaseService } from '../src/core/database/db.service';
-import { LoggerService } from '../src/core/observability/logger.service';
+import { DatabaseService } from '../core/database/db.service';
+import { WorkflowEngine } from '../core/workflows/workflow.engine';
+import { WORKFLOW_DEFINITIONS } from '../core/workflows/workflow.definitions';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {
@@ -25,18 +26,12 @@ export default async function handler(req: any, res: any) {
   }
 
   const db = DatabaseService.getInstance();
-  const logger = LoggerService.getInstance();
+  const workflowEngine = WorkflowEngine.getInstance();
 
   if (req.method === 'GET') {
     try {
-      const filter: any = {};
-      if (req.query?.industry) filter.industry = String(req.query.industry);
-      if (req.query?.qualificationStatus) filter.qualificationStatus = String(req.query.qualificationStatus);
-      if (req.query?.outreachStatus) filter.outreachStatus = String(req.query.outreachStatus);
-      if (req.query?.search) filter.searchQuery = String(req.query.search);
-
-      const leads = db.getLeads(filter);
-      return sendJson(res, 200, { success: true, count: leads.length, leads });
+      const instances = db.getWorkflows();
+      return sendJson(res, 200, { success: true, workflows: WORKFLOW_DEFINITIONS, instances });
     } catch (err: any) {
       return sendJson(res, 500, { success: false, error: err.message });
     }
@@ -49,20 +44,26 @@ export default async function handler(req: any, res: any) {
         try { body = JSON.parse(body); } catch { body = {}; }
       }
       body = body || {};
-      const saved = db.saveLead(body);
-      logger.info(`Lead saved: ${saved.businessName} (${saved.id})`);
-      return sendJson(res, 200, { success: true, lead: saved });
-    } catch (err: any) {
-      return sendJson(res, 400, { success: false, error: err.message });
-    }
-  }
+      const { workflowId, leadId, context } = body;
+      const def = WORKFLOW_DEFINITIONS.find(w => w.id === workflowId);
 
-  if (req.method === 'DELETE') {
-    try {
-      const id = req.query?.id as string;
-      if (!id) return sendJson(res, 400, { success: false, error: 'Lead ID required' });
-      const ok = db.deleteLead(id);
-      return sendJson(res, 200, { success: ok });
+      if (!def) {
+        return sendJson(res, 404, { success: false, error: `Workflow definition ${workflowId} not found` });
+      }
+
+      const initialContext = context || {};
+      if (leadId) {
+        const lead = db.getLeadById(leadId);
+        if (lead) {
+          initialContext.businessName = lead.businessName;
+          initialContext.industry = lead.industry;
+          initialContext.website = lead.website;
+          initialContext.location = lead.location;
+        }
+      }
+
+      const instance = await workflowEngine.startWorkflow(def, initialContext, leadId);
+      return sendJson(res, 200, { success: true, instance });
     } catch (err: any) {
       return sendJson(res, 500, { success: false, error: err.message });
     }
