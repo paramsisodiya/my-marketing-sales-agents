@@ -1,0 +1,32 @@
+{
+  "real": [
+    "Agent registry maps PrimeSoul Manager + 8 specialist agents.",
+    "Knowledge documents are dynamically resolved and injected into agent system prompts.",
+    "Context from Lead Researcher (Step 1) is passed via transformInput to Outbound Sales Agent (Step 2).",
+    "Proposal agent structures 3-Act persuasion document with Win Themes and transparent pricing.",
+    "State transition lifecycle DRAFT -> REVIEW -> APPROVED -> EXECUTED is functional.",
+    "Lightweight JSON database persists state to primesoul_data.json across server restarts.",
+    "LLM Factory supports runtime provider switching (Mock / Gemini / Ollama)."
+  ],
+  "mock": [
+    "WebAnalyzerTool uses deterministic heuristic simulation rather than real live HTTP DOM scraping.",
+    "WebSearchTool generates static search snippets instead of querying live search engine APIs (e.g., DuckDuckGo/SearXNG/Serper)."
+  ],
+  "incomplete": [
+    "Template tokens (e.g. {{contact_name}}, {{business_name}}) are not interpolated in mock output; raw handlebars tags appear in generated drafts."
+  ],
+  "broken": [],
+  "risks": [
+    "JSON file storage has no multi-process write locking or ACID transactions; under high concurrent load, race conditions could corrupt file writes.",
+    "No regex sanitization or prompt injection boundary guards on untrusted user inputs before sending to LLM.",
+    "HTML/XSS rendering in React UI relies on default React JSX escaping; pre tags render raw output."
+  ],
+  "ready": [
+    "All 9 specialized agents registered with metadata, colors, and required knowledge mapping.",
+    "12 Knowledge base documents indexed and loaded from disk.",
+    "Scenario 1 multi-agent workflow correctly transitions and pauses for Human Approval on cold email.",
+    "Scenario 2 (Deal to Proposal) executes and creates human approval ticket for proposal review.",
+    "Approval Gateway correctly resumes paused workflows upon human APPROVE action.",
+    "₹0 Offline Mock Provider is active by default, requiring zero external API keys."
+  ]
+}

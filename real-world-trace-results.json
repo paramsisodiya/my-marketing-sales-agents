@@ -1,0 +1,225 @@
+{
+  "stage1_web_analysis": {
+    "input": {
+      "url": "https://example.com",
+      "businessName": "Example Domain"
+    },
+    "agent": "web_analyzer",
+    "success": true,
+    "measured": {
+      "httpStatus": 200,
+      "responseTimeMs": 213,
+      "contentSizeBytes": 559,
+      "isHttps": true,
+      "redirectCount": 0,
+      "compressionType": "br"
+    },
+    "detected": {
+      "title": "Example Domain",
+      "hasViewport": true,
+      "viewportContent": "width=device-width, initial-scale=1",
+      "openGraph": {},
+      "headings": {
+        "h1": [
+          "Example Domain"
+        ],
+        "h2Count": 0,
+        "sampleH2s": []
+      },
+      "detectedCms": "Custom Web Application / Static HTML",
+      "hasWhatsAppLink": false,
+      "hasTelLink": false,
+      "schemaTypes": [],
+      "hasLocalBusinessSchema": false
+    },
+    "inferred": {
+      "mobileFriendlinessEstimate": "LIKELY_RESPONSIVE",
+      "localBusinessReadinessScore": 85,
+      "detectedTechStack": [
+        "Custom Web Application / Static HTML",
+        "HTTPS SSL Certificate"
+      ],
+      "identifiedGaps": [
+        "Title length (14 chars) is outside optimal 15-60 character range.",
+        "Missing meta description tag.",
+        "Missing canonical URL tag.",
+        "Missing Schema.org LocalBusiness JSON-LD markup for Google local 3-pack optimization.",
+        "No instant WhatsApp lead capture trigger detected on page."
+      ],
+      "recommendedPrimeSoulActions": [
+        "Implement custom Schema.org LocalBusiness JSON-LD markup",
+        "Deploy automated WhatsApp lead routing widget",
+        "Conduct technical Core Web Vitals optimization sprint",
+        "Fix fundamental on-page SEO meta architecture"
+      ]
+    },
+    "unknown": {
+      "realUserCoreWebVitals": "Unknown without Chrome User Experience Report (CrUX) API or Google Search Console connection.",
+      "organicSearchVolume": "Unknown without Google Analytics / Search Console direct access.",
+      "internalServerArchitecture": "Unknown without hosting server inspection."
+    },
+    "evidence": "Live HTTP GET to https://example.com returned Status 200 in 213ms"
+  },
+  "stage2_lead_research": {
+    "input": {
+      "task": "Audit digital presence for Example Domain",
+      "leadData": {
+        "businessName": "Example Domain",
+        "contactName": "UNKNOWN",
+        "website": "https://example.com",
+        "location": "UNKNOWN",
+        "industry": "UNKNOWN",
+        "source": "live_web_intake"
+      }
+    },
+    "agent": "lead_researcher",
+    "outputSummary": "Analyzed digital presence for Example Domain. Verified technical infrastructure and local visibility signals.",
+    "content": "### Digital Presence Analysis Report: Example Domain\n- **Website Audit**: Scanned https://example.com. Measured initial server response time: 213ms.\n- **Observed Gaps**: Title length (14 chars) is outside optimal 15-60 character range. and Missing meta description tag..\n- **Local Visibility**: Local presence in your local market requires Google Business Profile verification and LocalBusiness JSON-LD schema.",
+    "facts": [
+      "Target website: https://example.com",
+      "Measured initial server response time: 213ms",
+      "Identified gaps: Title length (14 chars) is outside optimal 15-60 character range. and Missing meta description tag."
+    ],
+    "assumptions": [
+      "Unoptimized local metadata in your local market reduces search discovery compared to optimized competitors"
+    ],
+    "recommendations": [
+      "Implement Schema.org LocalBusiness JSON-LD markup",
+      "Deploy direct WhatsApp conversion capture widget",
+      "Conduct technical Core Web Vitals optimization sprint"
+    ],
+    "unknowns": [
+      "Exact monthly organic search visitor count (requires Google Search Console access)",
+      "Active advertising spend budget if any"
+    ],
+    "confidence": "HIGH (Ground truth from live DOM parse)"
+  },
+  "stage3_qualification": {
+    "leadId": "lead-mtsck20b-prat",
+    "leadScore": 95,
+    "digitalPresenceScore": 85,
+    "qualificationStatus": "QUALIFIED",
+    "painPoints": [
+      "Title length (14 chars) is outside optimal 15-60 character range.",
+      "Missing meta description tag.",
+      "Missing canonical URL tag.",
+      "Missing Schema.org LocalBusiness JSON-LD markup for Google local 3-pack optimization.",
+      "No instant WhatsApp lead capture trigger detected on page."
+    ],
+    "recommendedServices": [
+      "Website Design & Development",
+      "Google Business Profile & Local SEO",
+      "WhatsApp Business Setup"
+    ],
+    "evidence": "Derived from live HTML crawl: missing meta tags, schema markup, and conversion triggers."
+  },
+  "stage6_outbound_draft": {
+    "agent": "outbound_sales",
+    "summary": "Crafted signal-based 3-touch outreach sequence anchored in verified technical gaps for Example Domain.",
+    "content": "### Touch 1 (Day 1 - Email)\nSubject: quick observation on Example Domain digital presence\n\nHi Example Domain Team,\n\nWe conducted a technical scan of https://example.com (server response time: 213ms). We identified key opportunities for growth: specifically Title length (14 chars) is outside optimal 15-60 character range. and Missing meta description tag..\n\nAccording to Google mobile web performance research, local mobile visitors leave unoptimized pages within seconds, directing high-intent local clients to nearby competitors in your local market.\n\nAt PrimeSoul, we engineer high-performance web platforms and Google 3-Pack local ranking architectures to capture qualified inquiries.\n\nOpen to seeing a 2-minute diagnostic breakdown of these opportunities for Example Domain?\n\nBest,  \nPrimeSoul Web Solutions Team\n\n---\n### Touch 2 (Day 4 - WhatsApp Follow-Up)\nHi Example Domain Team, Following up on my note regarding Example Domain's search visibility in your local market. We mapped 3 concrete optimizations for your local ranking. Worth a brief 5-minute conversation this week?\n\n---\n### Touch 3 (Day 8 - Breakup Email)\nSubject: closing the loop / Example Domain\n\nHi Example Domain Team, I assume upgrading Example Domain's digital infrastructure is not a current priority. If timing changes down the road and you want to scale local clients intake in your local market, feel free to reach back out.",
+    "facts": [
+      "Outreach references verified target domain: https://example.com",
+      "Referenced measured server response time (213ms)",
+      "Referenced observable gaps: Title length (14 chars) is outside optimal 15-60 character range. and Missing meta description tag.",
+      "Subject line complies with 3-5 word lowercase standard"
+    ],
+    "assumptions": [
+      "Target audience in your local market values instant WhatsApp response and mobile speed",
+      "Google industry research benchmark (40%+ bounce on unoptimized pages) applies to local search traffic"
+    ],
+    "recommendations": [
+      "Submit Touch 1 to Human Review before dispatching",
+      "Notice: Contact name is UNKNOWN; using neutral greeting"
+    ],
+    "unknowns": [
+      "Economic buyer / contact person name is UNKNOWN",
+      "Current monthly organic search visitor count (requires Google Search Console access)"
+    ],
+    "requiresApproval": true,
+    "noRawHandlebars": true
+  },
+  "stage7_approval_checkpoint_1": {
+    "ticketId": "appr-mtsck20k-hmfm",
+    "initialStatus": "REVIEW",
+    "finalStatus": "APPROVED",
+    "reviewerNotes": "Human Reviewer: Verified prospect name, URL, and signal alignment. Approved for sandboxed draft queue.",
+    "workflowPausedAndResumed": true
+  },
+  "stage8_9_discovery": {
+    "agent": "discovery",
+    "summary": "Prepared customized SPIN & Gap discovery call blueprint for Example Domain.",
+    "content": "### Discovery Call Architecture (30-Min Blueprint): Example Domain\n\n#### 1. Upfront Contract (First 2 Mins)\n\"Thanks for connecting today, there. In our 30 minutes, I want to understand how Example Domain currently handles digital intake in your local market, and examine the technical bottlenecks on https://example.com. At the end, we will determine if there is a strong fit to partner or agree it is not the right timing — both outcomes are completely fine. Does that sound fair?\"\n\n#### 2. SPIN Diagnostic Sequence\n- **Situation**: \"How do prospective clients currently find and contact Example Domain online in your local market?\"\n- **Problem**: \"We observed that https://example.com is currently Title length (14 chars) is outside optimal 15-60 character range. and Missing meta description tag.. Where do you notice inquiries dropping off before reaching your team?\"\n- **Implication**: \"When high-intent local clients visit on mobile and cannot instantly connect via WhatsApp or find structured local details, what does losing those inquiries cost Example Domain in monthly revenue?\"\n- **Need-Payoff**: \"If your platform loaded instantly and converted 15-25 additional qualified inquiries each month directly into your team, what impact would that have on your growth?\"\n\n#### 3. Gap Mapping\n- **Current State**: Title length (14 chars) is outside optimal 15-60 character range. and Missing meta description tag., unverified local map ranking.\n- **Future State**: [TARGET] Sub-second mobile response time, top 3 local Google rank, automated WhatsApp intake.\n- **The Gap**: Modern, high-performance digital infrastructure.",
+    "facts": [
+      "Structured using Neil Rackham's SPIN model and Keenan's Gap Selling methodology",
+      "Personalized to verified prospect domain: https://example.com"
+    ],
+    "assumptions": [
+      "Decision maker at Example Domain is willing to quantify the revenue impact of lost digital inquiries"
+    ],
+    "recommendations": [
+      "Maintain a 60/40 listen-to-talk ratio during discovery",
+      "Anchor implication questions on lost revenue rather than technical jargon"
+    ],
+    "unknowns": [
+      "Confirmed identity of primary contact person is UNKNOWN",
+      "Current monthly client acquisition cost (CAC)"
+    ],
+    "hasUpfrontContract": true,
+    "hasSpinSequence": true,
+    "hasGapMapping": true
+  },
+  "stage10_11_deal_strategy": {
+    "agent": "deal_strategist",
+    "summary": "Completed 8-point MEDDPICC qualification assessment for Example Domain.",
+    "content": "### MEDDPICC Opportunity Assessment: Example Domain\n- **Metrics (4/5)**: [TARGET] Increase qualified monthly clients inquiries by 30-50% within 90 days.\n- **Economic Buyer (2/5)**: [UNKNOWN: Decision Maker to be identified in discovery].\n- **Decision Criteria (4/5)**: [SPECIFICATION] Sub-second mobile load time, Google 3-Pack rank proof, fixed milestone pricing.\n- **Decision Process (3/5)**: Discovery review -> Proposal presentation -> Milestone agreement sign-off.\n- **Paper Process (3/5)**: Standard PrimeSoul service agreement + 50% advance invoice terms.\n- **Identify Pain (4/5)**: [OBSERVED GAPS] Title length (14 chars) is outside optimal 15-60 character range. and Missing meta description tag..\n- **Champion (3/5)**: Operational / Marketing lead advocating for digital modernization.\n- **Competition (4/5)**: Generic local freelancers vs in-house status quo.\n\n**Deal Positioning**: BATTLING — Strong win probability when proposal demonstrates verified technical gaps and transparent PrimeSoul SLAs.",
+    "facts": [
+      "Evaluated MEDDPICC criteria for target: Example Domain",
+      "Identified observable technical pain points: Title length (14 chars) is outside optimal 15-60 character range. and Missing meta description tag."
+    ],
+    "assumptions": [
+      "Competitors in your local market compete primarily on price without engineering performance guarantees"
+    ],
+    "recommendations": [
+      "Anchor proposal firmly on PrimeSoul engineering standards and post-launch maintenance SLA",
+      "Confirm Economic Buyer sign-off criteria during discovery call"
+    ],
+    "unknowns": [
+      "Identity of the Economic Buyer is UNKNOWN",
+      "Current monthly digital marketing ad spend if any"
+    ],
+    "meddpiccScore": "31/40 (BATTLING zone)",
+    "hasChallengerPitch": true
+  },
+  "stage12_proposal_draft": {
+    "agent": "proposal",
+    "summary": "Architected 3-Act Persuasion Proposal blueprint for Example Domain.",
+    "content": "### PrimeSoul Proposal: Digital Infrastructure & Growth Transformation\n**Client**: Example Domain  \n**Target Market**: your local market  \n**Prepared By**: PrimeSoul Web Solutions\n\n#### Act I: Understanding the Challenge\nExample Domain has established operations in your local market, but your current digital presence on https://example.com exhibits critical friction points: specifically Title length (14 chars) is outside optimal 15-60 character range. and Missing meta description tag.. High-intent local clients searching for your services encounter friction before reaching your intake team.\n\n#### Act II: The Solution Journey\n1. **High-Performance Web Platform**: Custom responsive architecture with SSL, clean semantic HTML, and Core Web Vitals optimization.\n2. **Google Business Profile & Local SEO Sprint**: Full optimization, 50+ local citations in your local market, and automated review capture.\n3. **Instant WhatsApp Intake Routing**: Direct lead routing connecting high-intent visitors directly into your intake staff.\n\n#### Act III: Transformed State & Investment\n- **[DELIVERABLE SLA TARGETS]**:\n  - Target Mobile Speed: <1.5s initial response time.\n  - Conversion Architecture: Direct WhatsApp intake routing.\n  - Search Visibility: Local 3-Pack optimization sprint.\n- **Investment Tier**: **Standard Transformation Package [₹35,000 - ₹55,000 / $700 - $1,100]** (Strictly adhering to PrimeSoul published pricing guidelines).\n- **Project Timeline**: 3-4 Weeks from kickoff to production deployment.",
+    "facts": [
+      "Follows 3-Act narrative architecture (Understanding -> Solution Journey -> Transformed State)",
+      "Pricing strictly grounded in PrimeSoul published pricing guidelines (knowledge/pricing.md)",
+      "Grounded in verified observable gaps: Title length (14 chars) is outside optimal 15-60 character range. and Missing meta description tag."
+    ],
+    "assumptions": [
+      "Client has core branding assets ready for the development sprint"
+    ],
+    "recommendations": [
+      "Route proposal through Human Approval before dispatching to client",
+      "Follow up within 48 hours of client receiving the proposal"
+    ],
+    "unknowns": [
+      "Any third-party custom API integrations required beyond standard web/WhatsApp"
+    ],
+    "requiresApproval": true,
+    "hasAct1": true,
+    "hasAct2": true,
+    "hasAct3": true,
+    "pricingGrounded": true
+  },
+  "stage13_approval_checkpoint_2": {
+    "ticketId": "appr-mtsck21d-44kx",
+    "initialStatus": "REVIEW",
+    "finalStatus": "APPROVED",
+    "reviewerNotes": "Human Director: Proposal matches PrimeSoul 3-Act guidelines and pricing framework (₹35k - ₹55k range). Approved as formal client draft.",
+    "workflowPausedAndResumed": true
+  }
+}

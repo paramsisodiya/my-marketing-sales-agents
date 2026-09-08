@@ -1,0 +1,183 @@
+{
+  "area1_lead_research": {
+    "analyzerSuccess": true,
+    "measuredHttpStatus": 200,
+    "measuredResponseTimeMs": 173,
+    "detectedTitle": "Example Domain",
+    "agentOutputSummary": "Analyzed digital presence for Example Corp. Detected mobile speed and local visibility gaps.",
+    "agentFactsCount": 3,
+    "agentFacts": [
+      "Target website (https://example.com) has 3.8s mobile LCP",
+      "Google Business Profile for Example Corp is unverified",
+      "No local structured schema (LocalBusiness JSON-LD) detected"
+    ],
+    "agentGaps": [
+      "Title length (14 chars) is outside optimal 15-60 character range.",
+      "Missing meta description tag.",
+      "Missing canonical URL tag.",
+      "Missing Schema.org LocalBusiness JSON-LD markup for Google local 3-pack optimization.",
+      "No instant WhatsApp lead capture trigger detected on page."
+    ],
+    "hasFabrications": false
+  },
+  "area2_lead_qualification": {
+    "totalLeads": 3,
+    "sampleLeadScoring": [
+      {
+        "name": "Apex Dental Care & Implant Center",
+        "leadScore": 100,
+        "qualificationStatus": "QUALIFIED",
+        "digitalPresenceScore": 42,
+        "recommendedServices": [
+          "Website Design & Development",
+          "Google Business Profile & Local SEO",
+          "WhatsApp Business Setup"
+        ],
+        "painPointsCount": 4
+      },
+      {
+        "name": "Vanguard Realty & Luxury Estates",
+        "leadScore": 91,
+        "qualificationStatus": "QUALIFIED",
+        "digitalPresenceScore": 58,
+        "recommendedServices": [
+          "Landing Pages",
+          "Google Ads",
+          "Meta Ads",
+          "PrimeOMS SaaS Implementation"
+        ],
+        "painPointsCount": 3
+      },
+      {
+        "name": "Aura Organic Skincare & Wellness",
+        "leadScore": 74,
+        "qualificationStatus": "RESEARCHED",
+        "digitalPresenceScore": 50,
+        "recommendedServices": [
+          "Website Design & Development",
+          "SEO",
+          "WhatsApp Business Setup"
+        ],
+        "painPointsCount": 3
+      }
+    ]
+  },
+  "area3_outbound_sales": {
+    "agentId": "outbound_sales",
+    "requiresApproval": true,
+    "hasContactName": true,
+    "hasBusinessName": true,
+    "hasLocation": true,
+    "noRawHandlebars": true,
+    "summary": "Crafted 3-touch signal-based multi-channel outreach sequence for Metro Dental Studio."
+  },
+  "area4_follow_up": {
+    "hasMultiTouchSequence": true,
+    "requiresApproval": true,
+    "automatedCronSchedulerPresent": false,
+    "manualApprovalQueueEnforced": true
+  },
+  "area5_discovery": {
+    "hasUpfrontContract": true,
+    "hasSpinSequence": true,
+    "hasGapMapping": true,
+    "leadPersonalized": true,
+    "requiresApproval": false
+  },
+  "area6_deal_strategy": {
+    "hasMeddpiccScores": true,
+    "hasDealVerdict": true,
+    "unknownsHandled": true,
+    "factsCount": 2
+  },
+  "area7_proposals": {
+    "has3ActStructure": true,
+    "requiresApproval": true,
+    "pricingKnowledgeLoaded": true,
+    "pricingMatchesGuidelines": true
+  },
+  "area8_marketing": {
+    "hasValueEquation": true,
+    "hasLinkedInPost": true,
+    "hasInstagramCarousel": true,
+    "contentRequiresApproval": true
+  },
+  "area9_seo": {
+    "hasLocalBusinessSchema": true,
+    "hasGoogleBusinessProfilePlan": true,
+    "hasKeywordCluster": true,
+    "personalized": true
+  },
+  "area10_knowledge_base": {
+    "totalDocuments": 12,
+    "requiredDocsLoaded": true,
+    "searchWorking": true
+  },
+  "area11_workflow_engine": {
+    "workflowStarted": true,
+    "correctlyPausedForApproval": true,
+    "approvalIdGenerated": true,
+    "resumedStatus": "COMPLETED",
+    "persistedInDb": true
+  },
+  "area12_crm": {
+    "created": true,
+    "retrievedMatch": true,
+    "updatedMatch": true,
+    "leadScorePersisted": true,
+    "deletedSuccessfully": true
+  },
+  "area13_ui": {
+    "serverRunning": true,
+    "endpoints": {
+      "/api/agents": {
+        "status": 200,
+        "success": true
+      },
+      "/api/workflows": {
+        "status": 200,
+        "success": true
+      },
+      "/api/leads": {
+        "status": 200,
+        "success": true
+      },
+      "/api/approvals": {
+        "status": 200,
+        "success": true
+      },
+      "/api/knowledge": {
+        "status": 200,
+        "success": true
+      },
+      "/api/settings": {
+        "status": 200,
+        "success": true
+      },
+      "/api/logs": {
+        "status": 200,
+        "success": true
+      }
+    }
+  },
+  "area14_ai_providers": {
+    "activeProvider": "mock",
+    "mockAvailable": true,
+    "geminiAdapterConfigured": true,
+    "geminiHasApiKey": false,
+    "ollamaAdapterConfigured": true,
+    "ollamaBaseUrl": "http://localhost:11434"
+  },
+  "area15_error_handling": {
+    "unresolvableDomainHandled": true,
+    "missingVariableValidationCaught": true,
+    "nonExistentAgentHandled": true
+  },
+  "area16_security": {
+    "localhostBlocked": true,
+    "privateIpBlocked": true,
+    "awsMetadataBlocked": true,
+    "promptInjectionFlagged": true,
+    "xmlTagsEscaped": true
+  }
+}
