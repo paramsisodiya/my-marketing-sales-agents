@@ -1,3 +1,5 @@
+import { ILeadIntelligenceProfile, IdentityConfidenceStatus } from './lead-intelligence.types';
+
 export type QualificationStatus =
   | 'UNQUALIFIED'
   | 'RESEARCHED'
@@ -32,6 +34,7 @@ export interface ILead {
     instagram?: string;
     facebook?: string;
     twitter?: string;
+    youtube?: string;
   };
   source: string;
   leadScore: number; // 0 - 100
@@ -55,6 +58,12 @@ export interface ILead {
     competition?: string;
     totalScore?: number; // 0 - 40
   };
+  // P2.1 Lead Intelligence Extensions
+  intelligenceProfile?: ILeadIntelligenceProfile;
+  lastResearchAt?: string;
+  researchStatus?: 'COMPLETED' | 'PARTIAL' | 'FAILED';
+  researchRunId?: string;
+  identityConfidence?: IdentityConfidenceStatus;
   createdAt: string;
   updatedAt: string;
 }

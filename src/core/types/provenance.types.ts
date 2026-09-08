@@ -3,7 +3,7 @@
  * Enforces verifiable source attribution and prevents hallucination/contamination.
  */
 
-export type FactSourceType = 'LIVE_WEBSITE' | 'USER_CRM' | 'PRIMESOUL_KNOWLEDGE' | 'INFERENCE' | 'UNKNOWN';
+export type FactSourceType = 'LIVE_WEBSITE' | 'PUBLIC_WEB' | 'USER_CRM' | 'PRIMESOUL_KNOWLEDGE' | 'INFERENCE' | 'UNKNOWN';
 
 export type FactConfidence = 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
 

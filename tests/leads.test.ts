@@ -8,6 +8,7 @@ describe('PrimeSoul AI Leads & Database Suite', () => {
 
   beforeEach(() => {
     db = DatabaseService.getInstance();
+    db.resetData();
     tool = new LeadStoreTool();
   });
 
@@ -21,9 +22,11 @@ describe('PrimeSoul AI Leads & Database Suite', () => {
   });
 
   it('should calculate weighted score for a lead', async () => {
+    const leads = db.getLeads();
+    const targetLead = leads[0];
     const result = await tool.execute({
       action: 'score',
-      leadId: 'lead-001',
+      leadId: targetLead.id,
     });
 
     expect(result.success).toBe(true);

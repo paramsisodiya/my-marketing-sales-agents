@@ -22,6 +22,8 @@ export interface IWebAnalysisReport {
     hasViewport: boolean;
     viewportContent?: string;
     robotsDirective?: string;
+    robotsTxtStatus: 'AVAILABLE' | 'MISSING' | 'UNCHECKED';
+    sitemapStatus: 'AVAILABLE' | 'MISSING' | 'UNCHECKED';
     openGraph: {
       title?: string;
       description?: string;
@@ -31,10 +33,27 @@ export interface IWebAnalysisReport {
       h1: string[];
       h2Count: number;
       sampleH2s: string[];
+      h3Count: number;
+      sampleH3s: string[];
     };
     detectedCms: string;
     hasWhatsAppLink: boolean;
     hasTelLink: boolean;
+    publicPhones: string[];
+    publicEmails: string[];
+    bookingLinks: string[];
+    contactPageUrls: string[];
+    socialProfiles: {
+      linkedin?: string;
+      facebook?: string;
+      instagram?: string;
+      twitter?: string;
+      youtube?: string;
+    };
+    imageOptimization: {
+      totalImages: number;
+      missingAltCount: number;
+    };
     schemaTypes: string[];
     hasLocalBusinessSchema: boolean;
   };
@@ -95,7 +114,6 @@ export class WebAnalyzerTool implements ITool {
     const startTime = Date.now();
 
     try {
-      // Safe fetch with manual redirect loop check
       let currentUrl = parsedUrl.toString();
       let redirectCount = 0;
       let finalResponse: Response | null = null;
@@ -112,7 +130,7 @@ export class WebAnalyzerTool implements ITool {
               'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
               'Accept-Language': 'en-US,en;q=0.9',
             },
-            redirect: 'manual', // Handle manually to validate each target against SSRF
+            redirect: 'manual',
             signal: controller.signal,
           });
 
@@ -166,6 +184,24 @@ export class WebAnalyzerTool implements ITool {
       const decoder = new TextDecoder('utf-8');
       const htmlText = decoder.decode(arrayBuf.slice(0, this.MAX_BODY_BYTES));
 
+      // Fast check for robots.txt
+      let robotsTxtStatus: 'AVAILABLE' | 'MISSING' | 'UNCHECKED' = 'UNCHECKED';
+      let sitemapStatus: 'AVAILABLE' | 'MISSING' | 'UNCHECKED' = 'UNCHECKED';
+
+      try {
+        const robotsUrl = new URL('/robots.txt', currentUrl).toString();
+        const rRes = await fetch(robotsUrl, { method: 'HEAD', signal: AbortSignal.timeout(2000) });
+        robotsTxtStatus = rRes.status === 200 ? 'AVAILABLE' : 'MISSING';
+      } catch {
+        robotsTxtStatus = 'MISSING';
+      }
+
+      if (htmlText.includes('sitemap.xml') || htmlText.includes('sitemap_index.xml')) {
+        sitemapStatus = 'AVAILABLE';
+      } else {
+        sitemapStatus = 'UNCHECKED';
+      }
+
       const report = this.parseHtmlMetadata({
         originalUrl: targetUrlString,
         finalUrl: currentUrl,
@@ -176,6 +212,8 @@ export class WebAnalyzerTool implements ITool {
         isHttps: currentUrl.startsWith('https://'),
         redirectCount,
         html: htmlText,
+        robotsTxtStatus,
+        sitemapStatus,
         businessName: args.businessName,
       });
 
@@ -197,7 +235,6 @@ export class WebAnalyzerTool implements ITool {
   public async validateSafeHost(hostname: string): Promise<string | null> {
     const lowerHost = hostname.toLowerCase();
 
-    // Block localhost and standard loopback hostnames
     if (
       lowerHost === 'localhost' ||
       lowerHost.endsWith('.localhost') ||
@@ -210,12 +247,10 @@ export class WebAnalyzerTool implements ITool {
       return `Target host '${hostname}' is a local loopback/internal address.`;
     }
 
-    // Direct IP check
     if (this.isPrivateIp(lowerHost)) {
       return `Target IP '${hostname}' belongs to a reserved private or link-local network.`;
     }
 
-    // Resolve DNS and check resulting IP addresses
     try {
       const lookupResult = await dns.lookup(hostname, { all: true });
       for (const addr of lookupResult) {
@@ -224,7 +259,6 @@ export class WebAnalyzerTool implements ITool {
         }
       }
     } catch (dnsErr: any) {
-      // If DNS resolution fails, allow calling code to catch connection error or report invalid host
       if (dnsErr.code === 'ENOTFOUND') {
         return `Domain name could not be resolved (ENOTFOUND): '${hostname}'`;
       }
@@ -233,29 +267,18 @@ export class WebAnalyzerTool implements ITool {
     return null;
   }
 
-  /**
-   * Checks if an IPv4 or IPv6 address belongs to a private, loopback, or link-local range.
-   */
   public isPrivateIp(ip: string): boolean {
-    // IPv4 private ranges
-    // 127.0.0.0/8 (Loopback)
     if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) return true;
-    // 10.0.0.0/8 (Private)
     if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) return true;
-    // 172.16.0.0/12 (Private 172.16.0.0 - 172.31.255.255)
     const match172 = ip.match(/^172\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
     if (match172) {
       const secondOctet = parseInt(match172[1], 10);
       if (secondOctet >= 16 && secondOctet <= 31) return true;
     }
-    // 192.168.0.0/16 (Private)
     if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(ip)) return true;
-    // 169.254.0.0/16 (Link-local / Cloud metadata service e.g. AWS 169.254.169.254)
     if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(ip)) return true;
-    // 0.0.0.0/8
     if (/^0\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) return true;
 
-    // IPv6 private & loopback
     if (ip === '::1' || ip === '::' || ip.toLowerCase().startsWith('fc') || ip.toLowerCase().startsWith('fd') || ip.toLowerCase().startsWith('fe80')) {
       return true;
     }
@@ -264,7 +287,7 @@ export class WebAnalyzerTool implements ITool {
   }
 
   /**
-   * Parses HTML content to extract meta tags, structured data, headings, and SEO gap signals.
+   * Parses HTML content to extract meta tags, structured data, headings, contacts, and SEO gap signals.
    */
   public parseHtmlMetadata(params: {
     originalUrl: string;
@@ -276,6 +299,8 @@ export class WebAnalyzerTool implements ITool {
     isHttps: boolean;
     redirectCount: number;
     html: string;
+    robotsTxtStatus?: 'AVAILABLE' | 'MISSING' | 'UNCHECKED';
+    sitemapStatus?: 'AVAILABLE' | 'MISSING' | 'UNCHECKED';
     businessName?: string;
   }): IWebAnalysisReport {
     const { html, originalUrl, finalUrl, httpStatus, responseTimeMs, contentSizeBytes, compressionType, isHttps, redirectCount } = params;
@@ -313,37 +338,31 @@ export class WebAnalyzerTool implements ITool {
       image: ogImageMatch ? ogImageMatch[1].trim() : undefined,
     };
 
-    // 6. Headings (H1 and H2)
-    const h1Regex = /<h1[^>]*>([\s\S]*?)<\/h1>/gi;
-    const h1Matches: string[] = [];
-    let match: RegExpExecArray | null;
-    while ((match = h1Regex.exec(html)) !== null) {
-      const text = this.stripTags(match[1]).trim();
-      if (text) h1Matches.push(text);
-    }
-
-    const h2Regex = /<h2[^>]*>([\s\S]*?)<\/h2>/gi;
-    const h2Matches: string[] = [];
-    while ((match = h2Regex.exec(html)) !== null) {
-      const text = this.stripTags(match[1]).trim();
-      if (text) h2Matches.push(text);
-    }
+    // 6. Headings (H1, H2, and H3)
+    const h1Matches = this.extractHeadingTags(html, 'h1');
+    const h2Matches = this.extractHeadingTags(html, 'h2');
+    const h3Matches = this.extractHeadingTags(html, 'h3');
 
     // 7. Structured Data (JSON-LD)
     const schemaRegex = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
     const schemaTypes: Set<string> = new Set();
     let hasLocalBusinessSchema = false;
+    let match: RegExpExecArray | null;
 
     while ((match = schemaRegex.exec(html)) !== null) {
       try {
         const parsed = JSON.parse(match[1]);
         this.extractSchemaTypes(parsed, schemaTypes);
       } catch {
-        // malformed JSON-LD ignored
+        // ignored
       }
     }
 
-    const localBusinessKeywords = ['LocalBusiness', 'MedicalBusiness', 'DentalClinic', 'LegalService', 'Store', 'Restaurant', 'ProfessionalService', 'AutomotiveBusiness', 'HomeAndConstructionBusiness'];
+    const localBusinessKeywords = [
+      'LocalBusiness', 'MedicalBusiness', 'DentalClinic', 'LegalService', 'Store',
+      'Restaurant', 'ProfessionalService', 'AutomotiveBusiness', 'HomeAndConstructionBusiness',
+      'HealthAndBeautyBusiness', 'RealEstateAgent', 'Dentist', 'Physician', 'Attorney'
+    ];
     for (const st of schemaTypes) {
       if (localBusinessKeywords.some(k => st.includes(k))) {
         hasLocalBusinessSchema = true;
@@ -351,11 +370,71 @@ export class WebAnalyzerTool implements ITool {
       }
     }
 
-    // 8. Mobile & Contact Signals
+    // 8. Mobile, Contact & Booking Signals
     const hasWhatsAppLink = /wa\.me\/|api\.whatsapp\.com\/|whatsapp:\/\//i.test(html);
     const hasTelLink = /href=["']tel:[^"']+["']/i.test(html);
 
-    // 9. CMS Detection
+    // Extract Public Phones
+    const phonesSet = new Set<string>();
+    const telHrefRegex = /href=["']tel:([^"']+)["']/gi;
+    while ((match = telHrefRegex.exec(html)) !== null) {
+      const cleanPhone = match[1].replace(/[^\d+]/g, '').trim();
+      if (cleanPhone.length >= 7) phonesSet.add(match[1].trim());
+    }
+
+    // Extract Public Emails
+    const emailsSet = new Set<string>();
+    const mailtoRegex = /href=["']mailto:([^"?#]+)[^"']*["']/gi;
+    while ((match = mailtoRegex.exec(html)) !== null) {
+      const emailCandidate = match[1].trim().toLowerCase();
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailCandidate) && !emailCandidate.endsWith('.png') && !emailCandidate.endsWith('.jpg')) {
+        emailsSet.add(emailCandidate);
+      }
+    }
+
+    // Extract Booking Links
+    const bookingLinksSet = new Set<string>();
+    const bookingPattern = /href=["'](https?:\/\/[^"']*(?:calendly\.com|cal\.com|zocdoc\.com|fresha\.com|jane\.app|acuityscheduling\.com|mindbodyonline\.com|square\.site|hubspot\.com\/meetings)[^"']*)["']/gi;
+    while ((match = bookingPattern.exec(html)) !== null) {
+      bookingLinksSet.add(match[1]);
+    }
+
+    // Extract Contact Pages
+    const contactPagesSet = new Set<string>();
+    const contactPagePattern = /href=["']([^"']*(?:\/contact|\/contact-us|\/reach-us|\/get-in-touch|\/location)[^"']*)["']/gi;
+    while ((match = contactPagePattern.exec(html)) !== null) {
+      contactPagesSet.add(match[1]);
+    }
+
+    // Extract Social Profiles
+    const socialProfiles: { linkedin?: string; facebook?: string; instagram?: string; twitter?: string; youtube?: string } = {};
+    const socialPatterns = [
+      { key: 'linkedin', regex: /href=["'](https?:\/\/(?:www\.)?linkedin\.com\/(?:company|in)\/[^"'\s]+)["']/i },
+      { key: 'facebook', regex: /href=["'](https?:\/\/(?:www\.)?facebook\.com\/[^"'\s]+)["']/i },
+      { key: 'instagram', regex: /href=["'](https?:\/\/(?:www\.)?instagram\.com\/[^"'\s]+)["']/i },
+      { key: 'twitter', regex: /href=["'](https?:\/\/(?:www\.)?(?:twitter\.com|x\.com)\/[^"'\s]+)["']/i },
+      { key: 'youtube', regex: /href=["'](https?:\/\/(?:www\.)?youtube\.com\/(?:@|channel\/|user\/)[^"'\s]+)["']/i },
+    ];
+    for (const sp of socialPatterns) {
+      const sMatch = html.match(sp.regex);
+      if (sMatch) {
+        (socialProfiles as any)[sp.key] = sMatch[1];
+      }
+    }
+
+    // Image Optimization Signals
+    const imgRegex = /<img\b([^>]*)>/gi;
+    let totalImages = 0;
+    let missingAltCount = 0;
+    while ((match = imgRegex.exec(html)) !== null) {
+      totalImages++;
+      const attrs = match[1];
+      if (!attrs.includes('alt=') || /alt=["']\s*["']/.test(attrs)) {
+        missingAltCount++;
+      }
+    }
+
+    // 9. CMS & Framework Detection
     const detectedCms = this.detectCms(html);
 
     // 10. Gap Analysis & Inferences
@@ -370,10 +449,12 @@ export class WebAnalyzerTool implements ITool {
     if (!hasViewport) gaps.push('Missing mobile viewport meta tag (site may not render properly on smartphones).');
     if (!hasLocalBusinessSchema) gaps.push('Missing Schema.org LocalBusiness JSON-LD markup for Google local 3-pack optimization.');
     if (!hasWhatsAppLink) gaps.push('No instant WhatsApp lead capture trigger detected on page.');
+    if (bookingLinksSet.size === 0 && phonesSet.size === 0) gaps.push('No direct online booking or visible telephone call triggers found.');
+    if (missingAltCount > 3) gaps.push(`${missingAltCount} images are missing descriptive alt attributes for SEO and accessibility.`);
     if (responseTimeMs > 2500) gaps.push(`Initial HTML server response time (${(responseTimeMs / 1000).toFixed(1)}s) is slower than Google 1.0s target.`);
 
     // Local readiness score calculation
-    let readinessScore = 40;
+    let readinessScore = 35;
     if (isHttps) readinessScore += 10;
     if (hasViewport) readinessScore += 15;
     if (title && metaDescription) readinessScore += 15;
@@ -393,7 +474,8 @@ export class WebAnalyzerTool implements ITool {
     const techStack: string[] = [detectedCms];
     if (isHttps) techStack.push('HTTPS SSL Certificate');
     if (hasWhatsAppLink) techStack.push('WhatsApp Click-to-Chat Integration');
-    if (hasTelLink) techStack.push('Direct Tel Calling Links');
+    if (hasTelLink || phonesSet.size > 0) techStack.push('Direct Tel Calling Links');
+    if (bookingLinksSet.size > 0) techStack.push('Direct Appointment Booking Integration');
     if (schemaTypes.size > 0) techStack.push(`Schema.org (${Array.from(schemaTypes).join(', ')})`);
 
     return {
@@ -416,15 +498,28 @@ export class WebAnalyzerTool implements ITool {
         hasViewport,
         viewportContent,
         robotsDirective,
+        robotsTxtStatus: params.robotsTxtStatus || 'UNCHECKED',
+        sitemapStatus: params.sitemapStatus || 'UNCHECKED',
         openGraph,
         headings: {
           h1: h1Matches,
           h2Count: h2Matches.length,
           sampleH2s: h2Matches.slice(0, 5),
+          h3Count: h3Matches.length,
+          sampleH3s: h3Matches.slice(0, 5),
         },
         detectedCms,
         hasWhatsAppLink,
         hasTelLink,
+        publicPhones: Array.from(phonesSet),
+        publicEmails: Array.from(emailsSet),
+        bookingLinks: Array.from(bookingLinksSet),
+        contactPageUrls: Array.from(contactPagesSet),
+        socialProfiles,
+        imageOptimization: {
+          totalImages,
+          missingAltCount,
+        },
         schemaTypes: Array.from(schemaTypes),
         hasLocalBusinessSchema,
       },
@@ -443,13 +538,29 @@ export class WebAnalyzerTool implements ITool {
     };
   }
 
+  private extractHeadingTags(html: string, tag: 'h1' | 'h2' | 'h3'): string[] {
+    const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'gi');
+    const results: string[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = regex.exec(html)) !== null) {
+      const text = this.stripTags(m[1]).trim();
+      if (text) results.push(text);
+    }
+    return results;
+  }
+
   private detectCms(html: string): string {
-    if (/wp-content|wp-includes|wordpress/i.test(html)) return 'WordPress / Elementor';
-    if (/cdn\.shopify\.com|shopify/i.test(html)) return 'Shopify';
-    if (/wix\.com|wixsite\.com/i.test(html)) return 'Wix';
+    if (/wp-content|wp-includes|wordpress/i.test(html)) {
+      if (/elementor/i.test(html)) return 'WordPress / Elementor Builder';
+      if (/divi/i.test(html)) return 'WordPress / Divi Builder';
+      return 'WordPress CMS';
+    }
+    if (/cdn\.shopify\.com|shopify/i.test(html)) return 'Shopify E-Commerce';
+    if (/wix\.com|wixsite\.com/i.test(html)) return 'Wix Website Builder';
     if (/squarespace\.com/i.test(html)) return 'Squarespace';
     if (/webflow\.com|data-wf-page/i.test(html)) return 'Webflow';
     if (/__NEXT_DATA__|next\/router/i.test(html)) return 'Next.js React Framework';
+    if (/__NUXT__|nuxt/i.test(html)) return 'Nuxt.js Vue Framework';
     return 'Custom Web Application / Static HTML';
   }
 

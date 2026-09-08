@@ -254,8 +254,12 @@ app.post('/api/settings', (req: Request, res: Response) => {
   res.json({ success: true, settings: updated });
 });
 
+import { LeadIntelligenceService } from '../core/research/lead-intelligence.service';
+
+const leadIntelligenceService = LeadIntelligenceService.getInstance();
+
 // ==========================================
-// 8. Tools Routes
+// 8. Tools & Research Routes
 // ==========================================
 app.post('/api/tools/web-analyze', async (req: Request, res: Response) => {
   const result = await webAnalyzer.execute(req.body);
@@ -265,6 +269,28 @@ app.post('/api/tools/web-analyze', async (req: Request, res: Response) => {
 app.post('/api/tools/doc-generate', async (req: Request, res: Response) => {
   const result = await docGenerator.execute(req.body);
   res.json(result);
+});
+
+app.post('/api/research/run', async (req: Request, res: Response) => {
+  try {
+    const result = await leadIntelligenceService.executeResearch(req.body);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/research/runs/:leadId', (req: Request, res: Response) => {
+  const runs = db.getResearchRuns(req.params.leadId);
+  res.json({ success: true, runs });
+});
+
+app.get('/api/research/profile/:leadId', (req: Request, res: Response) => {
+  const lead = db.getLeadById(req.params.leadId);
+  if (!lead || !lead.intelligenceProfile) {
+    return res.status(404).json({ success: false, error: 'Lead intelligence profile not found' });
+  }
+  res.json({ success: true, profile: lead.intelligenceProfile });
 });
 
 // Serve frontend static assets if built

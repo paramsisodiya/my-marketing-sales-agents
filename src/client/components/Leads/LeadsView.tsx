@@ -18,6 +18,7 @@ import {
 import { ILead, QualificationStatus, OutreachStatus } from '../../../core/types/lead.types';
 import { apiService } from '../../services/api.service';
 import { ProvenanceInspectorModal } from '../Provenance/ProvenanceInspectorModal';
+import { LeadIntelligenceModal } from './LeadIntelligenceModal';
 
 interface LeadsViewProps {
   leads: ILead[];
@@ -36,6 +37,7 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
   const [activeLead, setActiveLead] = useState<ILead | null>(leads[0] || null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isProvenanceModalOpen, setIsProvenanceModalOpen] = useState(false);
+  const [isIntelligenceModalOpen, setIsIntelligenceModalOpen] = useState(false);
 
   // New Lead Form State
   const [newBusinessName, setNewBusinessName] = useState('');
@@ -250,6 +252,15 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button
+                  onClick={() => setIsIntelligenceModalOpen(true)}
+                  className="btn btn-primary btn-sm"
+                  title="Open Lead Intelligence Profile & Research Pipeline"
+                  style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11.5px', background: 'linear-gradient(135deg, #06B6D4 0%, #3B82F6 100%)', border: 'none' }}
+                >
+                  <Search size={14} />
+                  <span>Research Lead</span>
+                </button>
+                <button
                   onClick={() => setIsProvenanceModalOpen(true)}
                   className="btn btn-secondary btn-sm"
                   title="Inspect Data Provenance & Grounding"
@@ -414,6 +425,15 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
         isOpen={isProvenanceModalOpen}
         onClose={() => setIsProvenanceModalOpen(false)}
         lead={activeLead}
+      />
+
+      {/* Lead Intelligence Modal */}
+      <LeadIntelligenceModal
+        isOpen={isIntelligenceModalOpen}
+        onClose={() => setIsIntelligenceModalOpen(false)}
+        lead={activeLead}
+        onLeadUpdated={onRefresh}
+        onOpenProvenance={() => setIsProvenanceModalOpen(true)}
       />
     </div>
   );

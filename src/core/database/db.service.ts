@@ -3,12 +3,14 @@ import path from 'path';
 import { ILead, ILeadFilter } from '../types/lead.types';
 import { IWorkflowInstance } from '../types/workflow.types';
 import { IApprovalItem, ApprovalStatus } from '../types/approval.types';
+import { IResearchRun } from '../types/lead-intelligence.types';
 import { SEED_LEADS, SEED_APPROVALS } from './seed.data';
 
 export interface IDatabaseSchema {
   leads: ILead[];
   workflows: IWorkflowInstance[];
   approvals: IApprovalItem[];
+  researchRuns: IResearchRun[];
   proposals: any[];
   contentPosts: any[];
   settings: {
@@ -40,7 +42,9 @@ export class DatabaseService {
     if (fs.existsSync(this.filePath)) {
       try {
         const raw = fs.readFileSync(this.filePath, 'utf-8');
-        return JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        if (!parsed.researchRuns) parsed.researchRuns = [];
+        return parsed;
       } catch (err) {
         console.error('Failed to parse primesoul_data.json, initializing defaults:', err);
       }
@@ -50,6 +54,7 @@ export class DatabaseService {
       leads: [...SEED_LEADS],
       workflows: [],
       approvals: [...SEED_APPROVALS],
+      researchRuns: [],
       proposals: [],
       contentPosts: [],
       settings: {
@@ -109,9 +114,20 @@ export class DatabaseService {
     const existingIndex = lead.id ? this.data.leads.findIndex(l => l.id === lead.id) : -1;
 
     if (existingIndex >= 0) {
+      const existing = this.data.leads[existingIndex];
       const updated: ILead = {
-        ...this.data.leads[existingIndex],
+        ...existing,
         ...lead,
+        // Non-destructive preservation of verified contact details
+        contactName: (lead.contactName && lead.contactName !== 'UNKNOWN') ? lead.contactName : existing.contactName,
+        location: (lead.location && lead.location !== 'UNKNOWN') ? lead.location : existing.location,
+        phone: lead.phone || existing.phone,
+        email: lead.email || existing.email,
+        website: lead.website || existing.website,
+        socialProfiles: {
+          ...existing.socialProfiles,
+          ...lead.socialProfiles,
+        },
         updatedAt: new Date().toISOString(),
       };
       this.data.leads[existingIndex] = updated;
@@ -139,6 +155,11 @@ export class DatabaseService {
       outreachStatus: lead.outreachStatus || 'NOT_STARTED',
       notes: lead.notes || '',
       meddpicc: lead.meddpicc || { totalScore: 0 },
+      intelligenceProfile: lead.intelligenceProfile,
+      lastResearchAt: lead.lastResearchAt,
+      researchStatus: lead.researchStatus,
+      researchRunId: lead.researchRunId,
+      identityConfidence: lead.identityConfidence,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -156,6 +177,32 @@ export class DatabaseService {
       return true;
     }
     return false;
+  }
+
+  // --- Research Runs CRUD ---
+  public getResearchRuns(leadId?: string): IResearchRun[] {
+    if (!this.data.researchRuns) this.data.researchRuns = [];
+    if (leadId) {
+      return this.data.researchRuns.filter(r => r.leadId === leadId);
+    }
+    return this.data.researchRuns;
+  }
+
+  public getResearchRunById(runId: string): IResearchRun | undefined {
+    if (!this.data.researchRuns) this.data.researchRuns = [];
+    return this.data.researchRuns.find(r => r.runId === runId);
+  }
+
+  public saveResearchRun(run: IResearchRun): IResearchRun {
+    if (!this.data.researchRuns) this.data.researchRuns = [];
+    const idx = this.data.researchRuns.findIndex(r => r.runId === run.runId);
+    if (idx >= 0) {
+      this.data.researchRuns[idx] = run;
+    } else {
+      this.data.researchRuns.unshift(run);
+    }
+    this.saveData();
+    return run;
   }
 
   // --- Workflows CRUD ---
@@ -253,9 +300,21 @@ export class DatabaseService {
     return this.data.settings;
   }
 
-  public updateSettings(settings: Partial<IDatabaseSchema['settings']>) {
-    this.data.settings = { ...this.data.settings, ...settings };
+  public resetData(): void {
+    this.data = {
+      leads: [...SEED_LEADS],
+      workflows: [],
+      approvals: [...SEED_APPROVALS],
+      researchRuns: [],
+      proposals: [],
+      contentPosts: [],
+      settings: {
+        aiProvider: (process.env.AI_PROVIDER as any) || 'mock',
+        geminiApiKey: process.env.GEMINI_API_KEY || '',
+        ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+        ollamaModel: process.env.OLLAMA_MODEL || 'llama3:8b',
+      },
+    };
     this.saveData();
-    return this.data.settings;
   }
 }

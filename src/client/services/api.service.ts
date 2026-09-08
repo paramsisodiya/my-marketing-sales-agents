@@ -151,7 +151,7 @@ export const apiService = {
     return data.settings;
   },
 
-  // Tools
+  // Tools & Lead Intelligence Research
   async analyzeWebsite(url: string, businessName?: string): Promise<any> {
     const res = await fetch(`${API_BASE}/tools/web-analyze`, {
       method: 'POST',
@@ -159,5 +159,29 @@ export const apiService = {
       body: JSON.stringify({ url, businessName }),
     });
     return res.json();
+  },
+
+  async runResearch(payload: { url?: string; businessName?: string; location?: string; leadId?: string }): Promise<any> {
+    const res = await fetch(`${API_BASE}/research/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+    return data;
+  },
+
+  async getResearchRuns(leadId: string): Promise<any[]> {
+    const res = await fetch(`${API_BASE}/research/runs/${leadId}`);
+    const data = await res.json();
+    return data.runs || [];
+  },
+
+  async getResearchProfile(leadId: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/research/profile/${leadId}`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+    return data.profile;
   }
 };
