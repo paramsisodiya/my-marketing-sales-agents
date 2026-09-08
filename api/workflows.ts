@@ -2,6 +2,15 @@ import { DatabaseService } from '../src/core/database/db.service';
 import { WorkflowEngine } from '../src/core/workflows/workflow.engine';
 import { WORKFLOW_DEFINITIONS } from '../src/core/workflows/workflow.definitions';
 
+function sendJson(res: any, status: number, data: any) {
+  if (typeof res.status === 'function' && typeof res.json === 'function') {
+    return res.status(status).json(data);
+  }
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(data));
+}
+
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -12,7 +21,8 @@ export default async function handler(req: any, res: any) {
   );
 
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    res.statusCode = 200;
+    return res.end();
   }
 
   const db = DatabaseService.getInstance();
@@ -21,20 +31,24 @@ export default async function handler(req: any, res: any) {
   if (req.method === 'GET') {
     try {
       const instances = db.getWorkflows();
-      return res.status(200).json({ success: true, workflows: WORKFLOW_DEFINITIONS, instances });
+      return sendJson(res, 200, { success: true, workflows: WORKFLOW_DEFINITIONS, instances });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return sendJson(res, 500, { success: false, error: err.message });
     }
   }
 
   if (req.method === 'POST') {
     try {
-      const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
+      let body = req.body;
+      if (typeof body === 'string') {
+        try { body = JSON.parse(body); } catch { body = {}; }
+      }
+      body = body || {};
       const { workflowId, leadId, context } = body;
       const def = WORKFLOW_DEFINITIONS.find(w => w.id === workflowId);
 
       if (!def) {
-        return res.status(404).json({ success: false, error: `Workflow definition ${workflowId} not found` });
+        return sendJson(res, 404, { success: false, error: `Workflow definition ${workflowId} not found` });
       }
 
       const initialContext = context || {};
@@ -49,11 +63,11 @@ export default async function handler(req: any, res: any) {
       }
 
       const instance = await workflowEngine.startWorkflow(def, initialContext, leadId);
-      return res.status(200).json({ success: true, instance });
+      return sendJson(res, 200, { success: true, instance });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return sendJson(res, 500, { success: false, error: err.message });
     }
   }
 
-  return res.status(405).json({ success: false, error: `Method ${req.method} not allowed` });
+  return sendJson(res, 405, { success: false, error: `Method ${req.method} not allowed` });
 }

@@ -1,6 +1,15 @@
 import { DatabaseService } from '../src/core/database/db.service';
 import { LeadIntelligenceService } from '../src/core/research/lead-intelligence.service';
 
+function sendJson(res: any, status: number, data: any) {
+  if (typeof res.status === 'function' && typeof res.json === 'function') {
+    return res.status(status).json(data);
+  }
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(data));
+}
+
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -11,7 +20,8 @@ export default async function handler(req: any, res: any) {
   );
 
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    res.statusCode = 200;
+    return res.end();
   }
 
   const db = DatabaseService.getInstance();
@@ -21,9 +31,9 @@ export default async function handler(req: any, res: any) {
     try {
       const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
       const result = await leadIntelligenceService.executeResearch(body);
-      return res.status(200).json(result);
+      return sendJson(res, 200, result);
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return sendJson(res, 500, { success: false, error: err.message });
     }
   }
 
@@ -33,23 +43,23 @@ export default async function handler(req: any, res: any) {
       const type = req.query?.type as string; // 'runs' | 'profile'
 
       if (!leadId) {
-        return res.status(400).json({ success: false, error: 'leadId is required' });
+        return sendJson(res, 400, { success: false, error: 'leadId is required' });
       }
 
       if (type === 'profile') {
         const lead = db.getLeadById(leadId);
         if (!lead || !lead.intelligenceProfile) {
-          return res.status(404).json({ success: false, error: 'Lead profile not found' });
+          return sendJson(res, 404, { success: false, error: 'Lead profile not found' });
         }
-        return res.status(200).json({ success: true, profile: lead.intelligenceProfile });
+        return sendJson(res, 200, { success: true, profile: lead.intelligenceProfile });
       }
 
       const runs = db.getResearchRuns(leadId);
-      return res.status(200).json({ success: true, runs });
+      return sendJson(res, 200, { success: true, runs });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return sendJson(res, 500, { success: false, error: err.message });
     }
   }
 
-  return res.status(405).json({ success: false, error: `Method ${req.method} not allowed` });
+  return sendJson(res, 405, { success: false, error: `Method ${req.method} not allowed` });
 }

@@ -1,5 +1,14 @@
 import { LoggerService } from '../src/core/observability/logger.service';
 
+function sendJson(res: any, status: number, data: any) {
+  if (typeof res.status === 'function' && typeof res.json === 'function') {
+    return res.status(status).json(data);
+  }
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(data));
+}
+
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -10,7 +19,8 @@ export default async function handler(req: any, res: any) {
   );
 
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    res.statusCode = 200;
+    return res.end();
   }
 
   const logger = LoggerService.getInstance();
@@ -23,11 +33,11 @@ export default async function handler(req: any, res: any) {
       const level = req.query?.level as any;
 
       const logs = logger.getRecentLogs(limit, { agentId, workflowId, level });
-      return res.status(200).json({ success: true, logs });
+      return sendJson(res, 200, { success: true, logs });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return sendJson(res, 500, { success: false, error: err.message });
     }
   }
 
-  return res.status(405).json({ success: false, error: `Method ${req.method} not allowed` });
+  return sendJson(res, 405, { success: false, error: `Method ${req.method} not allowed` });
 }

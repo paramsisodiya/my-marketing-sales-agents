@@ -1,6 +1,15 @@
 import { DatabaseService } from '../src/core/database/db.service';
 import { LoggerService } from '../src/core/observability/logger.service';
 
+function sendJson(res: any, status: number, data: any) {
+  if (typeof res.status === 'function' && typeof res.json === 'function') {
+    return res.status(status).json(data);
+  }
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(data));
+}
+
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -11,7 +20,8 @@ export default async function handler(req: any, res: any) {
   );
 
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    res.statusCode = 200;
+    return res.end();
   }
 
   const db = DatabaseService.getInstance();
@@ -26,33 +36,37 @@ export default async function handler(req: any, res: any) {
       if (req.query?.search) filter.searchQuery = String(req.query.search);
 
       const leads = db.getLeads(filter);
-      return res.status(200).json({ success: true, count: leads.length, leads });
+      return sendJson(res, 200, { success: true, count: leads.length, leads });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return sendJson(res, 500, { success: false, error: err.message });
     }
   }
 
   if (req.method === 'POST') {
     try {
-      const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
+      let body = req.body;
+      if (typeof body === 'string') {
+        try { body = JSON.parse(body); } catch { body = {}; }
+      }
+      body = body || {};
       const saved = db.saveLead(body);
       logger.info(`Lead saved: ${saved.businessName} (${saved.id})`);
-      return res.status(200).json({ success: true, lead: saved });
+      return sendJson(res, 200, { success: true, lead: saved });
     } catch (err: any) {
-      return res.status(400).json({ success: false, error: err.message });
+      return sendJson(res, 400, { success: false, error: err.message });
     }
   }
 
   if (req.method === 'DELETE') {
     try {
       const id = req.query?.id as string;
-      if (!id) return res.status(400).json({ success: false, error: 'Lead ID required' });
+      if (!id) return sendJson(res, 400, { success: false, error: 'Lead ID required' });
       const ok = db.deleteLead(id);
-      return res.status(200).json({ success: ok });
+      return sendJson(res, 200, { success: ok });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return sendJson(res, 500, { success: false, error: err.message });
     }
   }
 
-  return res.status(405).json({ success: false, error: `Method ${req.method} not allowed` });
+  return sendJson(res, 405, { success: false, error: `Method ${req.method} not allowed` });
 }

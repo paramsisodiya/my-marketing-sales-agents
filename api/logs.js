@@ -71,6 +71,14 @@ var LoggerService = class _LoggerService {
 };
 
 // api/logs.ts
+function sendJson(res, status, data) {
+  if (typeof res.status === "function" && typeof res.json === "function") {
+    return res.status(status).json(data);
+  }
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(data));
+}
 async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -80,7 +88,8 @@ async function handler(req, res) {
     "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version"
   );
   if (req.method === "OPTIONS") {
-    return res.status(200).end();
+    res.statusCode = 200;
+    return res.end();
   }
   const logger = LoggerService.getInstance();
   if (req.method === "GET") {
@@ -90,12 +99,12 @@ async function handler(req, res) {
       const workflowId = req.query?.workflowId;
       const level = req.query?.level;
       const logs = logger.getRecentLogs(limit, { agentId, workflowId, level });
-      return res.status(200).json({ success: true, logs });
+      return sendJson(res, 200, { success: true, logs });
     } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+      return sendJson(res, 500, { success: false, error: err.message });
     }
   }
-  return res.status(405).json({ success: false, error: `Method ${req.method} not allowed` });
+  return sendJson(res, 405, { success: false, error: `Method ${req.method} not allowed` });
 }
 export {
   handler as default

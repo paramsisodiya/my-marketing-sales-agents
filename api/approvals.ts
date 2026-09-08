@@ -2,6 +2,15 @@ import { DatabaseService } from '../src/core/database/db.service';
 import { WorkflowEngine } from '../src/core/workflows/workflow.engine';
 import { LoggerService } from '../src/core/observability/logger.service';
 
+function sendJson(res: any, status: number, data: any) {
+  if (typeof res.status === 'function' && typeof res.json === 'function') {
+    return res.status(status).json(data);
+  }
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(data));
+}
+
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -12,7 +21,8 @@ export default async function handler(req: any, res: any) {
   );
 
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    res.statusCode = 200;
+    return res.end();
   }
 
   const db = DatabaseService.getInstance();
@@ -23,16 +33,20 @@ export default async function handler(req: any, res: any) {
     try {
       const status = req.query?.status as any;
       const approvals = db.getApprovals(status);
-      return res.status(200).json({ success: true, count: approvals.length, approvals });
+      return sendJson(res, 200, { success: true, count: approvals.length, approvals });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return sendJson(res, 500, { success: false, error: err.message });
     }
   }
 
   if (req.method === 'POST') {
     try {
       const id = req.query?.id || req.body?.id;
-      const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
+      let body = req.body;
+      if (typeof body === 'string') {
+        try { body = JSON.parse(body); } catch { body = {}; }
+      }
+      body = body || {};
       const { action, comment, modifiedContent } = body;
 
       const statusMap: any = {
@@ -45,7 +59,7 @@ export default async function handler(req: any, res: any) {
       const updated = db.updateApprovalStatus(id, targetStatus, comment, modifiedContent);
 
       if (!updated) {
-        return res.status(404).json({ success: false, error: 'Approval item not found' });
+        return sendJson(res, 404, { success: false, error: 'Approval item not found' });
       }
 
       if (updated.workflowInstanceId) {
@@ -58,11 +72,11 @@ export default async function handler(req: any, res: any) {
       }
 
       logger.info(`Approval item ${updated.id} status updated to ${targetStatus}`);
-      return res.status(200).json({ success: true, approval: updated });
+      return sendJson(res, 200, { success: true, approval: updated });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return sendJson(res, 500, { success: false, error: err.message });
     }
   }
 
-  return res.status(405).json({ success: false, error: `Method ${req.method} not allowed` });
+  return sendJson(res, 405, { success: false, error: `Method ${req.method} not allowed` });
 }

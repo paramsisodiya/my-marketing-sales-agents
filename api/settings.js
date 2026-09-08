@@ -1229,6 +1229,14 @@ var LoggerService = class _LoggerService {
 };
 
 // api/settings.ts
+function sendJson(res, status, data) {
+  if (typeof res.status === "function" && typeof res.json === "function") {
+    return res.status(status).json(data);
+  }
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(data));
+}
 async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -1238,25 +1246,34 @@ async function handler(req, res) {
     "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version"
   );
   if (req.method === "OPTIONS") {
-    return res.status(200).end();
+    res.statusCode = 200;
+    return res.end();
   }
   const db = DatabaseService.getInstance();
   const logger = LoggerService.getInstance();
   if (req.method === "GET") {
     try {
       const settings = db.getSettings();
-      return res.status(200).json({ success: true, settings });
+      return sendJson(res, 200, { success: true, settings });
     } catch (err) {
       console.error("Settings GET error:", err);
-      return res.status(500).json({ success: false, error: err.message || "Failed to retrieve settings" });
+      return sendJson(res, 500, { success: false, error: err.message || "Failed to retrieve settings" });
     }
   }
   if (req.method === "POST") {
     try {
-      const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
+      let body = req.body;
+      if (typeof body === "string") {
+        try {
+          body = JSON.parse(body);
+        } catch {
+          body = {};
+        }
+      }
+      body = body || {};
       const { aiProvider, geminiApiKey, ollamaBaseUrl, ollamaModel } = body;
       if (aiProvider && !["mock", "gemini", "ollama"].includes(aiProvider)) {
-        return res.status(400).json({
+        return sendJson(res, 400, {
           success: false,
           error: `Invalid AI Provider '${aiProvider}'. Must be 'mock', 'gemini', or 'ollama'.`
         });
@@ -1277,13 +1294,13 @@ async function handler(req, res) {
       }
       const hasKey = Boolean(rawSettings.geminiApiKey && rawSettings.geminiApiKey.trim().length > 0);
       logger.info(`Settings updated. Active AI Provider: ${updated.aiProvider}, Gemini Configured: ${hasKey}`);
-      return res.status(200).json({ success: true, settings: updated });
+      return sendJson(res, 200, { success: true, settings: updated });
     } catch (err) {
       console.error("Settings POST error:", err);
-      return res.status(500).json({ success: false, error: err.message || "Failed to save settings" });
+      return sendJson(res, 500, { success: false, error: err.message || "Failed to save settings" });
     }
   }
-  return res.status(405).json({ success: false, error: `Method ${req.method} not allowed` });
+  return sendJson(res, 405, { success: false, error: `Method ${req.method} not allowed` });
 }
 export {
   handler as default

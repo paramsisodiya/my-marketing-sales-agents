@@ -2397,6 +2397,14 @@ var WorkflowEngine = class _WorkflowEngine {
 
 // api/workflows.ts
 init_workflow_definitions();
+function sendJson(res, status, data) {
+  if (typeof res.status === "function" && typeof res.json === "function") {
+    return res.status(status).json(data);
+  }
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(data));
+}
 async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -2406,25 +2414,34 @@ async function handler(req, res) {
     "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version"
   );
   if (req.method === "OPTIONS") {
-    return res.status(200).end();
+    res.statusCode = 200;
+    return res.end();
   }
   const db = DatabaseService.getInstance();
   const workflowEngine = WorkflowEngine.getInstance();
   if (req.method === "GET") {
     try {
       const instances = db.getWorkflows();
-      return res.status(200).json({ success: true, workflows: WORKFLOW_DEFINITIONS, instances });
+      return sendJson(res, 200, { success: true, workflows: WORKFLOW_DEFINITIONS, instances });
     } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+      return sendJson(res, 500, { success: false, error: err.message });
     }
   }
   if (req.method === "POST") {
     try {
-      const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
+      let body = req.body;
+      if (typeof body === "string") {
+        try {
+          body = JSON.parse(body);
+        } catch {
+          body = {};
+        }
+      }
+      body = body || {};
       const { workflowId, leadId, context } = body;
       const def = WORKFLOW_DEFINITIONS.find((w) => w.id === workflowId);
       if (!def) {
-        return res.status(404).json({ success: false, error: `Workflow definition ${workflowId} not found` });
+        return sendJson(res, 404, { success: false, error: `Workflow definition ${workflowId} not found` });
       }
       const initialContext = context || {};
       if (leadId) {
@@ -2437,12 +2454,12 @@ async function handler(req, res) {
         }
       }
       const instance = await workflowEngine.startWorkflow(def, initialContext, leadId);
-      return res.status(200).json({ success: true, instance });
+      return sendJson(res, 200, { success: true, instance });
     } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+      return sendJson(res, 500, { success: false, error: err.message });
     }
   }
-  return res.status(405).json({ success: false, error: `Method ${req.method} not allowed` });
+  return sendJson(res, 405, { success: false, error: `Method ${req.method} not allowed` });
 }
 export {
   handler as default
