@@ -1,4 +1,4 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response, NextFunction, Router } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -31,10 +31,12 @@ const webAnalyzer = new WebAnalyzerTool();
 const docGenerator = new DocumentGeneratorTool();
 const leadIntelligenceService = LeadIntelligenceService.getInstance();
 
+const router = Router();
+
 // ==========================================
 // 1. AI Agents Routes
 // ==========================================
-app.get('/api/agents', (_req: Request, res: Response) => {
+router.get('/agents', (_req: Request, res: Response) => {
   try {
     const metadata = AgentRegistry.getAllMetadata();
     res.json({ success: true, agents: metadata });
@@ -43,7 +45,7 @@ app.get('/api/agents', (_req: Request, res: Response) => {
   }
 });
 
-app.post('/api/agents/:id/execute', async (req: Request, res: Response) => {
+router.post('/agents/:id/execute', async (req: Request, res: Response) => {
   try {
     const agentId = req.params.id as any;
     const agent = AgentRegistry.getAgent(agentId);
@@ -70,16 +72,16 @@ app.post('/api/agents/:id/execute', async (req: Request, res: Response) => {
 // ==========================================
 // 2. Workflows Routes
 // ==========================================
-app.get('/api/workflows', (_req: Request, res: Response) => {
+router.get('/workflows', (_req: Request, res: Response) => {
   res.json({ success: true, workflows: WORKFLOW_DEFINITIONS });
 });
 
-app.get('/api/workflows/instances', (_req: Request, res: Response) => {
+router.get('/workflows/instances', (_req: Request, res: Response) => {
   const instances = db.getWorkflows();
   res.json({ success: true, instances });
 });
 
-app.get('/api/workflows/instances/:id', (req: Request, res: Response) => {
+router.get('/workflows/instances/:id', (req: Request, res: Response) => {
   const instance = db.getWorkflowById(req.params.id);
   if (!instance) {
     return res.status(404).json({ success: false, error: 'Workflow instance not found' });
@@ -87,7 +89,7 @@ app.get('/api/workflows/instances/:id', (req: Request, res: Response) => {
   res.json({ success: true, instance });
 });
 
-app.post('/api/workflows/start', async (req: Request, res: Response) => {
+router.post('/workflows/start', async (req: Request, res: Response) => {
   try {
     const { workflowId, leadId, context } = req.body;
     const def = WORKFLOW_DEFINITIONS.find(w => w.id === workflowId);
@@ -114,7 +116,7 @@ app.post('/api/workflows/start', async (req: Request, res: Response) => {
   }
 });
 
-app.post('/api/workflows/instances/:id/resume', async (req: Request, res: Response) => {
+router.post('/workflows/instances/:id/resume', async (req: Request, res: Response) => {
   try {
     const { approvalId, approved, feedback } = req.body;
     const updated = await workflowEngine.resumeWorkflowAfterApproval(req.params.id, approvalId, approved, feedback);
@@ -127,7 +129,7 @@ app.post('/api/workflows/instances/:id/resume', async (req: Request, res: Respon
 // ==========================================
 // 3. Leads CRM Routes
 // ==========================================
-app.get('/api/leads', (req: Request, res: Response) => {
+router.get('/leads', (req: Request, res: Response) => {
   try {
     const filter: any = {};
     if (req.query.industry) filter.industry = String(req.query.industry);
@@ -142,13 +144,13 @@ app.get('/api/leads', (req: Request, res: Response) => {
   }
 });
 
-app.get('/api/leads/:id', (req: Request, res: Response) => {
+router.get('/leads/:id', (req: Request, res: Response) => {
   const lead = db.getLeadById(req.params.id);
   if (!lead) return res.status(404).json({ success: false, error: 'Lead not found' });
   res.json({ success: true, lead });
 });
 
-app.post('/api/leads', (req: Request, res: Response) => {
+router.post('/leads', (req: Request, res: Response) => {
   try {
     const saved = db.saveLead(req.body);
     logger.info(`Lead saved: ${saved.businessName} (${saved.id})`);
@@ -158,7 +160,7 @@ app.post('/api/leads', (req: Request, res: Response) => {
   }
 });
 
-app.delete('/api/leads/:id', (req: Request, res: Response) => {
+router.delete('/leads/:id', (req: Request, res: Response) => {
   try {
     const ok = db.deleteLead(req.params.id);
     res.json({ success: ok });
@@ -170,7 +172,7 @@ app.delete('/api/leads/:id', (req: Request, res: Response) => {
 // ==========================================
 // 4. Approvals Gateway Routes
 // ==========================================
-app.get('/api/approvals', (req: Request, res: Response) => {
+router.get('/approvals', (req: Request, res: Response) => {
   try {
     const status = req.query.status as any;
     const approvals = db.getApprovals(status);
@@ -180,7 +182,7 @@ app.get('/api/approvals', (req: Request, res: Response) => {
   }
 });
 
-app.post('/api/approvals/:id/action', async (req: Request, res: Response) => {
+router.post('/approvals/:id/action', async (req: Request, res: Response) => {
   try {
     const { action, comment, modifiedContent } = req.body;
     const statusMap: any = {
@@ -215,7 +217,7 @@ app.post('/api/approvals/:id/action', async (req: Request, res: Response) => {
 // ==========================================
 // 5. Knowledge Base Routes
 // ==========================================
-app.get('/api/knowledge', (_req: Request, res: Response) => {
+router.get('/knowledge', (_req: Request, res: Response) => {
   try {
     const docs = knowledgeService.getAll();
     res.json({ success: true, documents: docs });
@@ -224,13 +226,13 @@ app.get('/api/knowledge', (_req: Request, res: Response) => {
   }
 });
 
-app.get('/api/knowledge/:slug', (req: Request, res: Response) => {
+router.get('/knowledge/:slug', (req: Request, res: Response) => {
   const doc = knowledgeService.getBySlug(req.params.slug);
   if (!doc) return res.status(404).json({ success: false, error: 'Knowledge document not found' });
   res.json({ success: true, document: doc });
 });
 
-app.post('/api/knowledge/:slug', (req: Request, res: Response) => {
+router.post('/knowledge/:slug', (req: Request, res: Response) => {
   try {
     const { content } = req.body;
     if (!content) return res.status(400).json({ success: false, error: 'Content required' });
@@ -245,7 +247,7 @@ app.post('/api/knowledge/:slug', (req: Request, res: Response) => {
 // ==========================================
 // 6. Observability & Logs Routes
 // ==========================================
-app.get('/api/logs', (req: Request, res: Response) => {
+router.get('/logs', (req: Request, res: Response) => {
   try {
     const limit = req.query.limit ? Number(req.query.limit) : 100;
     const agentId = req.query.agentId as string | undefined;
@@ -262,7 +264,7 @@ app.get('/api/logs', (req: Request, res: Response) => {
 // ==========================================
 // 7. Settings & Provider Configuration
 // ==========================================
-app.get('/api/settings', (_req: Request, res: Response) => {
+router.get('/settings', (_req: Request, res: Response) => {
   try {
     const settings = db.getSettings();
     res.json({ success: true, settings });
@@ -271,7 +273,7 @@ app.get('/api/settings', (_req: Request, res: Response) => {
   }
 });
 
-app.post('/api/settings', (req: Request, res: Response) => {
+router.post('/settings', (req: Request, res: Response) => {
   try {
     const { aiProvider, geminiApiKey, ollamaBaseUrl, ollamaModel } = req.body || {};
 
@@ -310,7 +312,7 @@ app.post('/api/settings', (req: Request, res: Response) => {
 // ==========================================
 // 8. Tools & Research Routes
 // ==========================================
-app.post('/api/tools/web-analyze', async (req: Request, res: Response) => {
+router.post('/tools/web-analyze', async (req: Request, res: Response) => {
   try {
     const result = await webAnalyzer.execute(req.body);
     res.json(result);
@@ -319,7 +321,7 @@ app.post('/api/tools/web-analyze', async (req: Request, res: Response) => {
   }
 });
 
-app.post('/api/tools/doc-generate', async (req: Request, res: Response) => {
+router.post('/tools/doc-generate', async (req: Request, res: Response) => {
   try {
     const result = await docGenerator.execute(req.body);
     res.json(result);
@@ -328,7 +330,7 @@ app.post('/api/tools/doc-generate', async (req: Request, res: Response) => {
   }
 });
 
-app.post('/api/research/run', async (req: Request, res: Response) => {
+router.post('/research/run', async (req: Request, res: Response) => {
   try {
     const result = await leadIntelligenceService.executeResearch(req.body);
     res.json(result);
@@ -337,7 +339,7 @@ app.post('/api/research/run', async (req: Request, res: Response) => {
   }
 });
 
-app.get('/api/research/runs/:leadId', (req: Request, res: Response) => {
+router.get('/research/runs/:leadId', (req: Request, res: Response) => {
   try {
     const runs = db.getResearchRuns(req.params.leadId);
     res.json({ success: true, runs });
@@ -346,7 +348,7 @@ app.get('/api/research/runs/:leadId', (req: Request, res: Response) => {
   }
 });
 
-app.get('/api/research/profile/:leadId', (req: Request, res: Response) => {
+router.get('/research/profile/:leadId', (req: Request, res: Response) => {
   try {
     const lead = db.getLeadById(req.params.leadId);
     if (!lead || !lead.intelligenceProfile) {
@@ -357,6 +359,10 @@ app.get('/api/research/profile/:leadId', (req: Request, res: Response) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// Mount router on both /api and / for maximum compatibility with Vercel rewrites
+app.use('/api', router);
+app.use('/', router);
 
 // Serve frontend static assets if built locally
 const clientDist = path.resolve(process.cwd(), 'dist');
