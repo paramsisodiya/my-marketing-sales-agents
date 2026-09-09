@@ -20,6 +20,7 @@ import {
 import { apiService } from '../../services/api.service';
 import { IQRRestaurant, IQRCategory, IQRMenuItem } from '../../../core/types/growth.types';
 import { siteConfig, buildWhatsAppLink } from '../../../core/growth/site.config';
+import { QrMenuEngine } from '../../../core/growth/qr-menu.engine';
 
 interface QrMenuLandingPageProps {
   onNavigate: (route: string) => void;
@@ -124,16 +125,21 @@ export const QrMenuLandingPage: React.FC<QrMenuLandingPageProps> = ({ onNavigate
   };
 
   const publicUrl = createdRestaurant ? `${window.location.origin}/qr-menu/${createdRestaurant.slug}` : '';
-  const qrSvgUrl = createdRestaurant ? `/api/menus?action=qr&slug=${createdRestaurant.slug}` : '';
+  const qrSvg = createdRestaurant ? QrMenuEngine.generateQrCodeSvg(publicUrl, 240) : '';
+  const qrSvgUrl = qrSvg ? `data:image/svg+xml;utf8,${encodeURIComponent(qrSvg)}` : '';
 
   const handleDownloadQr = () => {
-    if (!qrSvgUrl) return;
+    if (!createdRestaurant) return;
+    const svg = QrMenuEngine.generateQrCodeSvg(publicUrl, 400);
+    const blob = new Blob([svg], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = qrSvgUrl;
-    a.download = `${createdRestaurant?.slug || 'restaurant'}-qr-menu.svg`;
+    a.href = url;
+    a.download = `${createdRestaurant.slug || 'restaurant'}-qr-menu.svg`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const primeOmsDemoWhatsapp = buildWhatsAppLink(
