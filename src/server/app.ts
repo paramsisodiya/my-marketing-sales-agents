@@ -360,6 +360,330 @@ router.get('/research/profile/:leadId', (req: Request, res: Response) => {
   }
 });
 
+// ==========================================
+// 9. Growth Engine — Free Business Audit
+// ==========================================
+router.post('/audit', async (req: Request, res: Response) => {
+  try {
+    const { businessName, websiteUrl, category, city, phone, email, googleBusinessUrl, referralCode } = req.body;
+    if (!businessName || businessName.trim().length === 0) {
+      return res.status(400).json({ success: false, error: 'Business name is required.' });
+    }
+
+    const { AuditEngine } = await import('../core/growth/audit.engine');
+    const { EventService } = await import('../core/growth/event.service');
+    const eventService = EventService.getInstance();
+
+    eventService.logEvent('audit_started', { metadata: { businessName, category, city } });
+
+    const auditResult = await AuditEngine.executeAudit({ businessName, websiteUrl, category, city });
+
+    const auditRecord = db.saveAudit({
+      businessName,
+      websiteUrl,
+      category: category || 'Other',
+      city: city || 'India',
+      phone,
+      email,
+      googleBusinessUrl,
+      score: auditResult.score,
+      grade: auditResult.grade,
+      resultsJson: auditResult,
+    });
+
+    let leadRecord = null;
+    if (phone || email) {
+      leadRecord = db.saveLead({
+        businessName,
+        businessCategory: category || 'Other',
+        website: websiteUrl,
+        phone,
+        email,
+        city,
+        location: city || 'India',
+        source: referralCode ? 'REFERRAL' : 'AUDIT',
+        sourceDetail: referralCode ? `referral_${referralCode}` : 'website_audit',
+        referralCode,
+        auditId: auditRecord.id,
+        digitalPresenceScore: auditResult.score,
+        painPoints: auditResult.issues,
+        opportunities: auditResult.opportunities,
+        recommendedServices: auditResult.recommendedActions,
+        growthStatus: 'NEW',
+      });
+
+      if (referralCode) {
+        db.trackReferralLead(referralCode);
+      }
+    }
+
+    eventService.logEvent('audit_completed', {
+      leadId: leadRecord?.id,
+      metadata: { auditId: auditRecord.id, score: auditResult.score },
+    });
+
+    res.json({ success: true, audit: auditRecord, lead: leadRecord });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/audit', (req: Request, res: Response) => {
+  try {
+    const audits = db.getAudits();
+    res.json({ success: true, count: audits.length, audits });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/audit/:id', (req: Request, res: Response) => {
+  try {
+    const audit = db.getAuditById(req.params.id);
+    if (!audit) return res.status(404).json({ success: false, error: 'Audit not found' });
+    res.json({ success: true, audit });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// 10. Growth Engine — Free QR Menus
+// ==========================================
+router.get('/menus', (_req: Request, res: Response) => {
+  try {
+    const restaurants = db.getRestaurants();
+    res.json({ success: true, count: restaurants.length, restaurants });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/menus/:slug', (req: Request, res: Response) => {
+  try {
+    const restaurant = db.getRestaurantBySlug(req.params.slug);
+    if (!restaurant) return res.status(404).json({ success: false, error: 'Restaurant not found' });
+    res.json({ success: true, restaurant });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/menus/:slug/qr', async (req: Request, res: Response) => {
+  try {
+    const { QrMenuEngine } = await import('../core/growth/qr-menu.engine');
+    const { siteConfig } = await import('../core/growth/site.config');
+    const publicUrl = `${siteConfig.url}/qr-menu/${req.params.slug}`;
+    const svg = QrMenuEngine.generateQrCodeSvg(publicUrl, 280);
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(svg);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/menus', async (req: Request, res: Response) => {
+  try {
+    const { businessName, phone, city, logoUrl, customSlug, referralCode } = req.body;
+    if (!businessName || !phone) {
+      return res.status(400).json({ success: false, error: 'Restaurant name and phone are required.' });
+    }
+
+    const { QrMenuEngine } = await import('../core/growth/qr-menu.engine');
+    const { EventService } = await import('../core/growth/event.service');
+    const eventService = EventService.getInstance();
+
+    const existingRestaurants = db.getRestaurants();
+    const existingSlugs = existingRestaurants.map(r => r.slug);
+    const slug = customSlug
+      ? QrMenuEngine.generateSlug(customSlug, existingSlugs)
+      : QrMenuEngine.generateSlug(businessName, existingSlugs);
+
+    const restaurant = db.saveRestaurant({
+      businessName,
+      slug,
+      phone,
+      city: city || 'India',
+      logoUrl,
+      isPublished: true,
+    });
+
+    const defaultMenu = QrMenuEngine.createDefaultMenu(restaurant.id);
+    for (const cat of defaultMenu.categories) db.saveCategory(cat);
+    for (const item of defaultMenu.items) db.saveMenuItem(item);
+
+    const lead = db.saveLead({
+      businessName,
+      businessCategory: 'Restaurant',
+      industry: 'Hospitality',
+      location: city || 'India',
+      city: city || 'India',
+      phone,
+      source: referralCode ? 'REFERRAL' : 'QR_MENU',
+      sourceDetail: referralCode ? `referral_${referralCode}` : 'qr_menu_creation',
+      requirement: 'Restaurant QR Menu',
+      timeline: 'Immediately',
+      growthStatus: 'QUALIFIED',
+      restaurantId: restaurant.id,
+      referralCode,
+      notes: `Created free QR digital menu at /qr-menu/${slug}`,
+    });
+
+    if (referralCode) {
+      db.trackReferralLead(referralCode);
+    }
+
+    eventService.logEvent('qr_menu_created', {
+      leadId: lead.id,
+      metadata: { restaurantId: restaurant.id, slug },
+    });
+
+    const full = db.getRestaurantBySlug(slug);
+    res.json({ success: true, restaurant: full, lead });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/menus/:slug/categories', (req: Request, res: Response) => {
+  try {
+    const restaurant = db.getRestaurantBySlug(req.params.slug);
+    if (!restaurant) return res.status(404).json({ success: false, error: 'Restaurant not found' });
+    const { name, sortOrder } = req.body;
+    const cat = db.saveCategory({ restaurantId: restaurant.id, name, sortOrder });
+    res.json({ success: true, category: cat });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/menus/:slug/items', (req: Request, res: Response) => {
+  try {
+    const restaurant = db.getRestaurantBySlug(req.params.slug);
+    if (!restaurant) return res.status(404).json({ success: false, error: 'Restaurant not found' });
+    const { categoryId, name, description, price, imageUrl, isAvailable, isVegetarian, sortOrder, id } = req.body;
+    const item = db.saveMenuItem({
+      id,
+      restaurantId: restaurant.id,
+      categoryId,
+      name,
+      description,
+      price: Number(price),
+      imageUrl,
+      isAvailable: isAvailable !== false,
+      isVegetarian: isVegetarian !== false,
+      sortOrder,
+    });
+    res.json({ success: true, item });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.delete('/menus/categories/:id', (req: Request, res: Response) => {
+  try {
+    const ok = db.deleteCategory(req.params.id);
+    res.json({ success: ok });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.delete('/menus/items/:id', (req: Request, res: Response) => {
+  try {
+    const ok = db.deleteMenuItem(req.params.id);
+    res.json({ success: ok });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// 11. Growth Engine — Referrals
+// ==========================================
+router.get('/referrals', (_req: Request, res: Response) => {
+  try {
+    const referrals = db.getReferrals();
+    res.json({ success: true, count: referrals.length, referrals });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/referrals/:code', (req: Request, res: Response) => {
+  try {
+    const ref = db.getReferralByCode(req.params.code);
+    if (!ref) return res.status(404).json({ success: false, error: 'Referral code not found' });
+    res.json({ success: true, referral: ref });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/referrals', async (req: Request, res: Response) => {
+  try {
+    const { referrerName, referrerContact, customCode, referredBusiness } = req.body;
+    if (!referrerName) return res.status(400).json({ success: false, error: 'referrerName is required' });
+
+    const { ReferralEngine } = await import('../core/growth/referral.engine');
+    const referralCode = customCode
+      ? ReferralEngine.normalizeCode(customCode)
+      : ReferralEngine.generateCode(referrerName);
+
+    const ref = db.saveReferral({ referralCode, referrerName, referrerContact, referredBusiness });
+    res.json({ success: true, referral: ref });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/referrals/:code/track', async (req: Request, res: Response) => {
+  try {
+    const ok = db.trackReferralClick(req.params.code);
+    const { EventService } = await import('../core/growth/event.service');
+    EventService.getInstance().logEvent('referral_clicked', { metadata: { code: req.params.code } });
+    res.json({ success: ok });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// 12. Growth Engine — Events & Site Config
+// ==========================================
+router.get('/events', async (_req: Request, res: Response) => {
+  try {
+    const { EventService } = await import('../core/growth/event.service');
+    const stats = EventService.getInstance().getEventStats();
+    const events = db.getEvents();
+    res.json({ success: true, stats, totalEvents: events.length, recentEvents: events.slice(0, 25) });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/events', async (req: Request, res: Response) => {
+  try {
+    const { eventName, anonymousId, leadId, metadata } = req.body;
+    if (!eventName) return res.status(400).json({ success: false, error: 'eventName is required' });
+    const { EventService } = await import('../core/growth/event.service');
+    const event = EventService.getInstance().logEvent(eventName, { anonymousId, leadId, metadata });
+    res.json({ success: true, event });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/config', async (_req: Request, res: Response) => {
+  try {
+    const { siteConfig } = await import('../core/growth/site.config');
+    res.json({ success: true, config: siteConfig });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Mount router on both /api and / for maximum compatibility with Vercel rewrites
 app.use('/api', router);
 app.use('/', router);

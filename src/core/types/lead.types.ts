@@ -1,4 +1,5 @@
 import { ILeadIntelligenceProfile, IdentityConfidenceStatus } from './lead-intelligence.types';
+import { BusinessCategory, LeadRequirement, LeadTimeline, LeadTemperature, GrowthLeadStatus, ILeadNote } from './growth.types';
 
 export type QualificationStatus =
   | 'UNQUALIFIED'
@@ -25,6 +26,8 @@ export interface ILead {
   businessName: string;
   industry: string;
   location: string;
+  businessCategory?: BusinessCategory;
+  city?: string;
   website?: string;
   contactName?: string;
   email?: string;
@@ -37,8 +40,13 @@ export interface ILead {
     youtube?: string;
   };
   source: string;
+  sourceDetail?: string;
+  requirement?: LeadRequirement;
+  timeline?: LeadTimeline;
   leadScore: number; // 0 - 100
+  leadTemperature?: LeadTemperature;
   qualificationStatus: QualificationStatus;
+  growthStatus?: GrowthLeadStatus;
   digitalPresenceScore: number; // 0 - 100
   painPoints: string[];
   opportunities: string[];
@@ -46,7 +54,13 @@ export interface ILead {
   outreachStatus: OutreachStatus;
   lastContacted?: string;
   nextFollowUp?: string;
+  followUpDate?: string;
+  assignedTo?: string;
+  referralCode?: string;
   notes?: string;
+  notesList?: ILeadNote[];
+  auditId?: string;
+  restaurantId?: string;
   meddpicc?: {
     metrics?: string;
     economicBuyer?: string;
@@ -70,8 +84,12 @@ export interface ILead {
 
 export interface ILeadFilter {
   industry?: string;
+  businessCategory?: string;
   qualificationStatus?: QualificationStatus;
+  growthStatus?: GrowthLeadStatus;
   outreachStatus?: OutreachStatus;
+  temperature?: LeadTemperature;
+  source?: string;
   minScore?: number;
   searchQuery?: string;
 }

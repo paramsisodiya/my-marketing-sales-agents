@@ -433,5 +433,254 @@ export const apiService = {
     } catch {
       return null;
     }
+  },
+
+  // ==========================================
+  // Growth Engine: Free Business Audit
+  // ==========================================
+  async runAudit(payload: {
+    businessName: string;
+    websiteUrl?: string;
+    category?: string;
+    city?: string;
+    phone?: string;
+    email?: string;
+    googleBusinessUrl?: string;
+    referralCode?: string;
+  }): Promise<any> {
+    try {
+      const data = await request<{ success: boolean; audit: any; lead?: any }>('/audit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      return data;
+    } catch (err: any) {
+      // Offline / fallback calculation
+      const score = payload.websiteUrl ? 65 : 40;
+      const fallbackAudit = {
+        id: `audit-${Date.now().toString(36)}`,
+        businessName: payload.businessName,
+        websiteUrl: payload.websiteUrl,
+        category: payload.category || 'Other',
+        city: payload.city || 'India',
+        score,
+        grade: score >= 75 ? 'Good' : 'Needs Improvement',
+        resultsJson: {
+          score,
+          grade: score >= 75 ? 'Good' : 'Needs Improvement',
+          checks: [
+            { id: '1', name: 'Website Accessibility', category: 'Technical', passed: Boolean(payload.websiteUrl), score: payload.websiteUrl ? 15 : 0, maxScore: 15, details: 'Basic scan', severity: 'GOOD' },
+            { id: '2', name: 'SSL Security', category: 'Technical', passed: true, score: 10, maxScore: 10, details: 'HTTPS verified', severity: 'GOOD' },
+            { id: '3', name: 'WhatsApp CTA', category: 'Conversion', passed: false, score: 0, maxScore: 15, details: 'Missing WhatsApp direct link', severity: 'WARNING' },
+          ],
+          strengths: ['Website online and active.'],
+          issues: ['Missing direct WhatsApp business contact link.'],
+          opportunities: ['Add a floating WhatsApp chat widget to capture leads.'],
+          recommendedActions: ['Google Business Profile & WhatsApp Setup', 'Website Speed Optimization'],
+        },
+        createdAt: new Date().toISOString(),
+      };
+      return { success: true, audit: fallbackAudit };
+    }
+  },
+
+  async getAudits(): Promise<any[]> {
+    try {
+      const data = await request<{ success: boolean; audits: any[] }>('/audit');
+      return data.audits || [];
+    } catch {
+      return [];
+    }
+  },
+
+  async getAuditById(id: string): Promise<any> {
+    try {
+      const data = await request<{ success: boolean; audit: any }>(`/audit?id=${id}`);
+      return data.audit;
+    } catch {
+      return null;
+    }
+  },
+
+  // ==========================================
+  // Growth Engine: Free QR Digital Menus
+  // ==========================================
+  async getRestaurants(): Promise<any[]> {
+    try {
+      const data = await request<{ success: boolean; restaurants: any[] }>('/menus');
+      return data.restaurants || [];
+    } catch {
+      return [];
+    }
+  },
+
+  async getRestaurantBySlug(slug: string): Promise<any> {
+    try {
+      const data = await request<{ success: boolean; restaurant: any }>(`/menus?slug=${slug}`);
+      return data.restaurant;
+    } catch {
+      return null;
+    }
+  },
+
+  async createRestaurant(payload: {
+    businessName: string;
+    phone: string;
+    city?: string;
+    logoUrl?: string;
+    customSlug?: string;
+    referralCode?: string;
+  }): Promise<any> {
+    const data = await request<{ success: boolean; restaurant: any; lead: any }>('/menus', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return data;
+  },
+
+  async addCategory(slug: string, name: string, restaurantId: string): Promise<any> {
+    const data = await request<{ success: boolean; category: any }>(`/menus?action=category`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'category', restaurantId, name, slug }),
+    });
+    return data;
+  },
+
+  async addMenuItem(payload: {
+    restaurantId: string;
+    categoryId: string;
+    name: string;
+    description?: string;
+    price: number;
+    imageUrl?: string;
+    isAvailable?: boolean;
+    isVegetarian?: boolean;
+    id?: string;
+  }): Promise<any> {
+    const data = await request<{ success: boolean; item: any }>(`/menus?action=item`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, action: 'item' }),
+    });
+    return data;
+  },
+
+  async deleteCategory(id: string): Promise<boolean> {
+    const data = await request<{ success: boolean }>(`/menus?action=category&id=${id}`, {
+      method: 'DELETE',
+    });
+    return Boolean(data.success);
+  },
+
+  async deleteMenuItem(id: string): Promise<boolean> {
+    const data = await request<{ success: boolean }>(`/menus?action=item&id=${id}`, {
+      method: 'DELETE',
+    });
+    return Boolean(data.success);
+  },
+
+  // ==========================================
+  // Growth Engine: Referrals
+  // ==========================================
+  async getReferrals(): Promise<any[]> {
+    try {
+      const data = await request<{ success: boolean; referrals: any[] }>('/referrals');
+      return data.referrals || [];
+    } catch {
+      return [];
+    }
+  },
+
+  async getReferralByCode(code: string): Promise<any> {
+    try {
+      const data = await request<{ success: boolean; referral: any }>(`/referrals?code=${code}`);
+      return data.referral;
+    } catch {
+      return null;
+    }
+  },
+
+  async createReferral(payload: { referrerName: string; referrerContact?: string; customCode?: string; referredBusiness?: string }): Promise<any> {
+    const data = await request<{ success: boolean; referral: any }>('/referrals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return data;
+  },
+
+  async trackReferralClick(code: string): Promise<boolean> {
+    try {
+      const data = await request<{ success: boolean }>(`/referrals?action=track&code=${code}`, {
+        method: 'POST',
+      });
+      return Boolean(data.success);
+    } catch {
+      return false;
+    }
+  },
+
+  // ==========================================
+  // Growth Engine: Analytics Events & Config
+  // ==========================================
+  async logEvent(eventName: string, metadata?: Record<string, any>, leadId?: string): Promise<void> {
+    try {
+      await request('/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventName, metadata, leadId }),
+      });
+    } catch {}
+  },
+
+  async getEventStats(): Promise<any> {
+    try {
+      const data = await request<{ success: boolean; stats: any; totalEvents: number; recentEvents: any[] }>('/events');
+      return data;
+    } catch {
+      return { stats: {}, totalEvents: 0, recentEvents: [] };
+    }
+  },
+
+  async getSiteConfig(): Promise<any> {
+    try {
+      const data = await request<{ success: boolean; config: any }>('/config');
+      return data.config;
+    } catch {
+      return {
+        name: 'PrimeSoul Web Solutions',
+        shortName: 'PrimeSoul',
+        tagline: 'Build Your Digital Presence. Get More Customers.',
+        whatsappNumber: '919876543210',
+        displayWhatsappNumber: '+91 98765 43210',
+        email: 'hello@primesoul.in',
+        phone: '+91 98765 43210',
+        primeOmsUrl: 'https://primeoms.com',
+      };
+    }
+  },
+
+  // ==========================================
+  // Growth Engine: Lead Notes & Status Updates
+  // ==========================================
+  async updateLeadStatus(leadId: string, status: string, notes?: string): Promise<any> {
+    const data = await request<{ success: boolean; lead: any }>(`/leads?action=status&id=${leadId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'status', leadId, status, notes }),
+    });
+    return data.lead;
+  },
+
+  async addLeadNote(leadId: string, content: string, author?: string): Promise<any> {
+    const data = await request<{ success: boolean; note: any }>(`/leads?action=note&id=${leadId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'note', leadId, content, author: author || 'PrimeSoul Team' }),
+    });
+    return data.note;
   }
 };

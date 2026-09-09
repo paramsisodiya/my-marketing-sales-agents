@@ -1,6 +1,6 @@
 import React from 'react';
 import { ShieldCheck, Database, Globe, HelpCircle, X } from 'lucide-react';
-import { ILead } from '../../core/types/lead.types';
+import { ILead } from '../../../core/types/lead.types';
 
 interface ProvenanceInspectorModalProps {
   isOpen: boolean;
