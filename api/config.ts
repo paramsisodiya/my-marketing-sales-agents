@@ -1,3 +1,5 @@
+import { siteConfig } from '../src/core/growth/site.config';
+
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {
     return res.status(status).json(data);
@@ -7,7 +9,7 @@ function sendJson(res: any, status: number, data: any) {
   res.end(JSON.stringify(data));
 }
 
-export default function handler(req: any, res: any) {
+export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
@@ -21,11 +23,9 @@ export default function handler(req: any, res: any) {
     return res.end();
   }
 
-  return sendJson(res, 200, {
-    success: true,
-    service: 'PrimeSoul Growth Engine & AI Operating System',
-    status: 'operational',
-    version: '1.0.0',
-    timestamp: new Date().toISOString(),
-  });
+  if (req.method === 'GET') {
+    return sendJson(res, 200, { success: true, config: siteConfig });
+  }
+
+  return sendJson(res, 405, { success: false, error: `Method ${req.method} not allowed` });
 }
