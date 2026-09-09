@@ -1,4 +1,4 @@
-import { AgentRegistry } from '../core/agents/agent.registry';
+import { AgentRegistry } from '../src/core/agents/agent.registry';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {
@@ -12,7 +12,7 @@ function sendJson(res: any, status: number, data: any) {
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader(
     'Access-Control-Allow-Headers',
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
@@ -24,42 +24,36 @@ export default async function handler(req: any, res: any) {
   }
 
   AgentRegistry.initialize();
+  const urlObj = new URL(req.url || '/', 'http://localhost');
+  const id = (req.query && req.query.id) || urlObj.searchParams.get('id');
 
   if (req.method === 'GET') {
-    try {
-      const metadata = AgentRegistry.getAllMetadata();
-      return sendJson(res, 200, { success: true, agents: metadata });
-    } catch (err: any) {
-      return sendJson(res, 500, { success: false, error: err.message });
-    }
+    const metadata = AgentRegistry.getAllMetadata();
+    return sendJson(res, 200, { success: true, agents: metadata });
   }
 
   if (req.method === 'POST') {
     try {
-      const agentId = (req.query?.id || req.body?.agentId) as any;
+      const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
+      const agentId = id || body.agentId || body.id;
       const agent = AgentRegistry.getAgent(agentId);
 
       if (!agent) {
         return sendJson(res, 404, { success: false, error: `Agent ${agentId} not found` });
       }
 
-      let body = req.body;
-      if (typeof body === 'string') {
-        try { body = JSON.parse(body); } catch { body = {}; }
-      }
-      body = body || {};
       const { task, objective, context, leadData, constraints } = body;
       const output = await agent.execute({
-        task: task || 'Execute specialist task',
-        objective: objective || 'Generate high-quality output for PrimeSoul',
+        task: task || 'Execute task',
+        objective: objective || 'Generate PrimeSoul output',
         context,
         leadData,
         constraints,
       });
 
-      return sendJson(res, 200, { success: true, output });
+      return sendJson(res, 200, { success: true, agentId, output });
     } catch (err: any) {
-      return sendJson(res, 500, { success: false, error: err.message });
+      return sendJson(res, 500, { success: false, error: err.message || 'Failed to execute agent' });
     }
   }
 

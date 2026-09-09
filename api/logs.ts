@@ -1,4 +1,4 @@
-import { LoggerService } from '../core/observability/logger.service';
+import { LoggerService } from '../src/core/observability/logger.service';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {
@@ -24,19 +24,18 @@ export default async function handler(req: any, res: any) {
   }
 
   const logger = LoggerService.getInstance();
+  const urlObj = new URL(req.url || '/', 'http://localhost');
+  const level = (req.query && req.query.level) || urlObj.searchParams.get('level');
+  const agentId = (req.query && req.query.agentId) || urlObj.searchParams.get('agentId');
+  const limit = (req.query && req.query.limit) || urlObj.searchParams.get('limit');
 
   if (req.method === 'GET') {
-    try {
-      const limit = req.query?.limit ? Number(req.query.limit) : 100;
-      const agentId = req.query?.agentId as string | undefined;
-      const workflowId = req.query?.workflowId as string | undefined;
-      const level = req.query?.level as any;
-
-      const logs = logger.getRecentLogs(limit, { agentId, workflowId, level });
-      return sendJson(res, 200, { success: true, logs });
-    } catch (err: any) {
-      return sendJson(res, 500, { success: false, error: err.message });
-    }
+    const logs = logger.getLogs({
+      level: level as any,
+      agentId: agentId as any,
+      limit: limit ? parseInt(limit, 10) : 100,
+    });
+    return sendJson(res, 200, { success: true, logs, count: logs.length });
   }
 
   return sendJson(res, 405, { success: false, error: `Method ${req.method} not allowed` });

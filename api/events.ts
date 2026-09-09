@@ -1,5 +1,5 @@
-import { DatabaseService } from '../core/database/db.service';
-import { EventService } from '../core/growth/event.service';
+import { EventService } from '../src/core/growth/event.service';
+import { DatabaseService } from '../src/core/database/db.service';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {
@@ -13,7 +13,7 @@ function sendJson(res: any, status: number, data: any) {
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader(
     'Access-Control-Allow-Headers',
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
@@ -28,24 +28,21 @@ export default async function handler(req: any, res: any) {
   const eventService = EventService.getInstance();
 
   if (req.method === 'GET') {
-    try {
-      const stats = eventService.getEventStats();
-      const events = db.getEvents();
-      return sendJson(res, 200, { success: true, stats, totalEvents: events.length, recentEvents: events.slice(0, 20) });
-    } catch (err: any) {
-      return sendJson(res, 500, { success: false, error: err.message });
-    }
+    const stats = eventService.getEventStats();
+    const events = db.getEvents();
+    return sendJson(res, 200, {
+      success: true,
+      stats,
+      totalEvents: events.length,
+      recentEvents: events.slice(0, 25),
+    });
   }
 
   if (req.method === 'POST') {
     try {
-      let body = req.body;
-      if (typeof body === 'string') {
-        try { body = JSON.parse(body); } catch { body = {}; }
-      }
-      body = body || {};
-
+      const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
       const { eventName, anonymousId, leadId, metadata } = body;
+
       if (!eventName) {
         return sendJson(res, 400, { success: false, error: 'eventName is required' });
       }
@@ -53,7 +50,7 @@ export default async function handler(req: any, res: any) {
       const event = eventService.logEvent(eventName, { anonymousId, leadId, metadata });
       return sendJson(res, 200, { success: true, event });
     } catch (err: any) {
-      return sendJson(res, 500, { success: false, error: err.message });
+      return sendJson(res, 500, { success: false, error: err.message || 'Failed to record event' });
     }
   }
 

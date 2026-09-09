@@ -1,4 +1,4 @@
-import { siteConfig } from '../core/growth/site.config';
+import { siteConfig } from '../src/core/growth/site.config';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {
