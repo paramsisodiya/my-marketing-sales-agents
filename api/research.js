@@ -1,5 +1,3 @@
-import { createRequire } from 'module'; const require = createRequire(import.meta.url);
-
 // src/core/tools/web-analyzer.tool.ts
 import dns from "node:dns/promises";
 import { URL as URL2 } from "node:url";

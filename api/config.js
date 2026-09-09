@@ -1,5 +1,3 @@
-import { createRequire } from 'module'; const require = createRequire(import.meta.url);
-
 // src/core/growth/site.config.ts
 var siteConfig = {
   name: "PrimeSoul Web Solutions",

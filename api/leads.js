@@ -1,5 +1,3 @@
-import { createRequire } from 'module'; const require = createRequire(import.meta.url);
-
 // src/core/database/db.service.ts
 import fs from "fs";
 import path from "path";

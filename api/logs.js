@@ -1,5 +1,3 @@
-import { createRequire } from 'module'; const require = createRequire(import.meta.url);
-
 // src/core/observability/logger.service.ts
 var LoggerService = class _LoggerService {
   static instance;

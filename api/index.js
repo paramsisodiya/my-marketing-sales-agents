@@ -1,5 +1,3 @@
-import { createRequire } from 'module'; const require = createRequire(import.meta.url);
-
 // src/api/index.ts
 function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");

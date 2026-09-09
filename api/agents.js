@@ -1,5 +1,3 @@
-import { createRequire } from 'module'; const require = createRequire(import.meta.url);
-
 // src/core/llm/mock.provider.ts
 var MockProvider = class {
   name = "mock";

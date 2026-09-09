@@ -1,5 +1,3 @@
-import { createRequire } from 'module'; const require = createRequire(import.meta.url);
-
 // src/core/growth/qr-menu.engine.ts
 var QrMenuEngine = class {
   /**
