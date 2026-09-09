@@ -1,4 +1,4 @@
-import { LoggerService } from '../src/core/observability/logger.service';
+import { LoggerService } from '../core/observability/logger.service';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {

@@ -1,4 +1,5 @@
-import { KnowledgeService } from '../src/core/knowledge/knowledge.service';
+import { WorkflowEngine } from '../core/workflows/workflow.engine';
+import { WORKFLOW_DEFINITIONS } from '../core/workflows/workflow.definitions';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {
@@ -23,34 +24,31 @@ export default async function handler(req: any, res: any) {
     return res.end();
   }
 
-  const knowledgeService = new KnowledgeService();
+  const workflowEngine = WorkflowEngine.getInstance();
   const urlObj = new URL(req.url || '/', 'http://localhost');
-  const slug = (req.query && req.query.slug) || urlObj.searchParams.get('slug');
+  const action = (req.query && req.query.action) || urlObj.searchParams.get('action');
 
   if (req.method === 'GET') {
-    if (slug) {
-      const doc = knowledgeService.getDocument(slug);
-      if (!doc) return sendJson(res, 404, { success: false, error: `Document ${slug} not found` });
-      return sendJson(res, 200, { success: true, document: doc });
+    if (action === 'instances') {
+      const instances = workflowEngine.getAllInstances();
+      return sendJson(res, 200, { success: true, instances, count: instances.length });
     }
-    const documents = knowledgeService.getAllDocuments();
-    return sendJson(res, 200, { success: true, documents, count: documents.length });
+    return sendJson(res, 200, { success: true, workflows: WORKFLOW_DEFINITIONS });
   }
 
   if (req.method === 'POST') {
     try {
       const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
-      const targetSlug = slug || body.slug;
-      const { content } = body;
+      const { workflowId, leadId, customInputs } = body;
 
-      if (!targetSlug || content === undefined) {
-        return sendJson(res, 400, { success: false, error: 'slug and content are required' });
+      if (!workflowId) {
+        return sendJson(res, 400, { success: false, error: 'workflowId is required' });
       }
 
-      const updated = knowledgeService.updateDocument(targetSlug, content);
-      return sendJson(res, 200, { success: true, document: updated });
+      const instance = await workflowEngine.startWorkflow(workflowId, leadId, customInputs);
+      return sendJson(res, 200, { success: true, instance });
     } catch (err: any) {
-      return sendJson(res, 500, { success: false, error: err.message || 'Failed to update document' });
+      return sendJson(res, 500, { success: false, error: err.message || 'Failed to execute workflow' });
     }
   }
 

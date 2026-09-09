@@ -1,5 +1,5 @@
-import { DatabaseService } from '../src/core/database/db.service';
-import { LlmFactory } from '../src/core/llm/llm.factory';
+import { DatabaseService } from '../core/database/db.service';
+import { LlmFactory } from '../core/llm/llm.factory';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {

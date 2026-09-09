@@ -1,5 +1,5 @@
-import { DatabaseService } from '../src/core/database/db.service';
-import { WorkflowEngine } from '../src/core/workflows/workflow.engine';
+import { DatabaseService } from '../core/database/db.service';
+import { WorkflowEngine } from '../core/workflows/workflow.engine';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {

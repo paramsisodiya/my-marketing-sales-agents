@@ -1,6 +1,6 @@
-import { QrMenuEngine } from '../src/core/growth/qr-menu.engine';
-import { DatabaseService } from '../src/core/database/db.service';
-import { EventService } from '../src/core/growth/event.service';
+import { QrMenuEngine } from '../core/growth/qr-menu.engine';
+import { DatabaseService } from '../core/database/db.service';
+import { EventService } from '../core/growth/event.service';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {

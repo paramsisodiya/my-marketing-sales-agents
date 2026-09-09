@@ -1,5 +1,5 @@
-import { EventService } from '../src/core/growth/event.service';
-import { DatabaseService } from '../src/core/database/db.service';
+import { EventService } from '../core/growth/event.service';
+import { DatabaseService } from '../core/database/db.service';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {

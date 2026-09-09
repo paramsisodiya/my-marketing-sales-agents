@@ -1,5 +1,5 @@
-import { LeadIntelligenceService } from '../src/core/research/lead-intelligence.service';
-import { DatabaseService } from '../src/core/database/db.service';
+import { LeadIntelligenceService } from '../core/research/lead-intelligence.service';
+import { DatabaseService } from '../core/database/db.service';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {

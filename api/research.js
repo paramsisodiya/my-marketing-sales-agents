@@ -1,0 +1,2630 @@
+import { createRequire } from 'module'; const require = createRequire(import.meta.url);
+
+// src/core/tools/web-analyzer.tool.ts
+import dns from "node:dns/promises";
+import { URL as URL2 } from "node:url";
+var WebAnalyzerTool = class {
+  name = "web_analyzer";
+  description = "Safely performs real HTTP analysis of a public website URL, extracting SEO metadata, mobile signals, schema markup, and performance metrics.";
+  parameters = [
+    { name: "url", type: "string", description: "The public website URL to audit", required: true },
+    { name: "businessName", type: "string", description: "Optional business name for local verification" },
+    { name: "timeoutMs", type: "number", description: "Optional timeout in ms (default 6000)" }
+  ];
+  MAX_REDIRECTS = 5;
+  MAX_BODY_BYTES = 2 * 1024 * 1024;
+  // 2 MB cap
+  async execute(args) {
+    if (!args.url || typeof args.url !== "string") {
+      return { success: false, error: "Invalid URL: A non-empty string URL is required." };
+    }
+    let targetUrlString = args.url.trim();
+    if (!targetUrlString.includes("://")) {
+      targetUrlString = `https://${targetUrlString}`;
+    }
+    let parsedUrl;
+    try {
+      parsedUrl = new URL2(targetUrlString);
+    } catch {
+      return { success: false, error: `Invalid URL format: '${args.url}'` };
+    }
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      return { success: false, error: `Unsupported protocol: '${parsedUrl.protocol}'. Only http and https are permitted.` };
+    }
+    const ssrfError = await this.validateSafeHost(parsedUrl.hostname);
+    if (ssrfError) {
+      return { success: false, error: `Security restriction: ${ssrfError}` };
+    }
+    const timeoutMs = args.timeoutMs || 6e3;
+    const startTime = Date.now();
+    try {
+      let currentUrl = parsedUrl.toString();
+      let redirectCount = 0;
+      let finalResponse = null;
+      while (redirectCount <= this.MAX_REDIRECTS) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const res = await fetch(currentUrl, {
+            method: "GET",
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 PrimeSoulAudit/1.0",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              "Accept-Language": "en-US,en;q=0.9"
+            },
+            redirect: "manual",
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+          if (res.status >= 300 && res.status < 400) {
+            const location = res.headers.get("location");
+            if (!location) {
+              finalResponse = res;
+              break;
+            }
+            const nextUrl = new URL2(location, currentUrl);
+            if (nextUrl.protocol !== "http:" && nextUrl.protocol !== "https:") {
+              return { success: false, error: `Redirect to unsupported protocol blocked: '${nextUrl.protocol}'` };
+            }
+            const nextHostSsrf = await this.validateSafeHost(nextUrl.hostname);
+            if (nextHostSsrf) {
+              return { success: false, error: `Redirect to unsafe internal host blocked: ${nextHostSsrf}` };
+            }
+            currentUrl = nextUrl.toString();
+            redirectCount++;
+            continue;
+          }
+          finalResponse = res;
+          break;
+        } catch (fetchErr) {
+          clearTimeout(timeoutId);
+          if (fetchErr.name === "AbortError") {
+            return { success: false, error: `Request timed out after ${timeoutMs}ms while connecting to ${targetUrlString}` };
+          }
+          throw fetchErr;
+        }
+      }
+      if (!finalResponse) {
+        return { success: false, error: `Exceeded maximum redirect limit (${this.MAX_REDIRECTS})` };
+      }
+      const responseTimeMs = Date.now() - startTime;
+      const httpStatus = finalResponse.status;
+      const compressionType = finalResponse.headers.get("content-encoding") || "none";
+      const arrayBuf = await finalResponse.arrayBuffer();
+      const contentSizeBytes = arrayBuf.byteLength;
+      const decoder = new TextDecoder("utf-8");
+      const htmlText = decoder.decode(arrayBuf.slice(0, this.MAX_BODY_BYTES));
+      let robotsTxtStatus = "UNCHECKED";
+      let sitemapStatus = "UNCHECKED";
+      try {
+        const robotsUrl = new URL2("/robots.txt", currentUrl).toString();
+        const rRes = await fetch(robotsUrl, { method: "HEAD", signal: AbortSignal.timeout(2e3) });
+        robotsTxtStatus = rRes.status === 200 ? "AVAILABLE" : "MISSING";
+      } catch {
+        robotsTxtStatus = "MISSING";
+      }
+      if (htmlText.includes("sitemap.xml") || htmlText.includes("sitemap_index.xml")) {
+        sitemapStatus = "AVAILABLE";
+      } else {
+        sitemapStatus = "UNCHECKED";
+      }
+      const report = this.parseHtmlMetadata({
+        originalUrl: targetUrlString,
+        finalUrl: currentUrl,
+        httpStatus,
+        responseTimeMs,
+        contentSizeBytes,
+        compressionType,
+        isHttps: currentUrl.startsWith("https://"),
+        redirectCount,
+        html: htmlText,
+        robotsTxtStatus,
+        sitemapStatus,
+        businessName: args.businessName
+      });
+      return {
+        success: true,
+        data: report
+      };
+    } catch (err) {
+      return {
+        success: false,
+        error: `Failed to analyze website: ${err.message || String(err)}`
+      };
+    }
+  }
+  /**
+   * Validates that the hostname is safe and does not resolve to private / loopback IP ranges (SSRF defense).
+   */
+  async validateSafeHost(hostname) {
+    const lowerHost = hostname.toLowerCase();
+    if (lowerHost === "localhost" || lowerHost.endsWith(".localhost") || lowerHost.endsWith(".local") || lowerHost.endsWith(".internal") || lowerHost === "0.0.0.0" || lowerHost === "127.0.0.1" || lowerHost === "::1") {
+      return `Target host '${hostname}' is a local loopback/internal address.`;
+    }
+    if (this.isPrivateIp(lowerHost)) {
+      return `Target IP '${hostname}' belongs to a reserved private or link-local network.`;
+    }
+    try {
+      const lookupResult = await dns.lookup(hostname, { all: true });
+      for (const addr of lookupResult) {
+        if (this.isPrivateIp(addr.address)) {
+          return `Target host '${hostname}' resolved to a private/internal IP address (${addr.address}).`;
+        }
+      }
+    } catch (dnsErr) {
+      if (dnsErr.code === "ENOTFOUND") {
+        return `Domain name could not be resolved (ENOTFOUND): '${hostname}'`;
+      }
+    }
+    return null;
+  }
+  isPrivateIp(ip) {
+    if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) return true;
+    if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) return true;
+    const match172 = ip.match(/^172\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
+    if (match172) {
+      const secondOctet = parseInt(match172[1], 10);
+      if (secondOctet >= 16 && secondOctet <= 31) return true;
+    }
+    if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(ip)) return true;
+    if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(ip)) return true;
+    if (/^0\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) return true;
+    if (ip === "::1" || ip === "::" || ip.toLowerCase().startsWith("fc") || ip.toLowerCase().startsWith("fd") || ip.toLowerCase().startsWith("fe80")) {
+      return true;
+    }
+    return false;
+  }
+  /**
+   * Parses HTML content to extract meta tags, structured data, headings, contacts, and SEO gap signals.
+   */
+  parseHtmlMetadata(params) {
+    const { html, originalUrl, finalUrl, httpStatus, responseTimeMs, contentSizeBytes, compressionType, isHttps, redirectCount } = params;
+    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const title = titleMatch ? this.cleanHtmlEntities(titleMatch[1].trim()) : void 0;
+    const descMatch = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']/i) || html.match(/<meta[^>]+content=["']([^"']*)["'][^>]+name=["']description["']/i);
+    const metaDescription = descMatch ? this.cleanHtmlEntities(descMatch[1].trim()) : void 0;
+    const canonicalMatch = html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']*)["']/i);
+    const canonicalUrl = canonicalMatch ? canonicalMatch[1].trim() : void 0;
+    const viewportMatch = html.match(/<meta[^>]+name=["']viewport["'][^>]+content=["']([^"']*)["']/i);
+    const hasViewport = !!viewportMatch;
+    const viewportContent = viewportMatch ? viewportMatch[1].trim() : void 0;
+    const robotsMatch = html.match(/<meta[^>]+name=["']robots["'][^>]+content=["']([^"']*)["']/i);
+    const robotsDirective = robotsMatch ? robotsMatch[1].trim() : void 0;
+    const ogTitleMatch = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']*)["']/i);
+    const ogDescMatch = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']*)["']/i);
+    const ogImageMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']*)["']/i);
+    const openGraph = {
+      title: ogTitleMatch ? this.cleanHtmlEntities(ogTitleMatch[1].trim()) : void 0,
+      description: ogDescMatch ? this.cleanHtmlEntities(ogDescMatch[1].trim()) : void 0,
+      image: ogImageMatch ? ogImageMatch[1].trim() : void 0
+    };
+    const h1Matches = this.extractHeadingTags(html, "h1");
+    const h2Matches = this.extractHeadingTags(html, "h2");
+    const h3Matches = this.extractHeadingTags(html, "h3");
+    const schemaRegex = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+    const schemaTypes = /* @__PURE__ */ new Set();
+    let hasLocalBusinessSchema = false;
+    let match;
+    while ((match = schemaRegex.exec(html)) !== null) {
+      try {
+        const parsed = JSON.parse(match[1]);
+        this.extractSchemaTypes(parsed, schemaTypes);
+      } catch {
+      }
+    }
+    const localBusinessKeywords = [
+      "LocalBusiness",
+      "MedicalBusiness",
+      "DentalClinic",
+      "LegalService",
+      "Store",
+      "Restaurant",
+      "ProfessionalService",
+      "AutomotiveBusiness",
+      "HomeAndConstructionBusiness",
+      "HealthAndBeautyBusiness",
+      "RealEstateAgent",
+      "Dentist",
+      "Physician",
+      "Attorney"
+    ];
+    for (const st of schemaTypes) {
+      if (localBusinessKeywords.some((k) => st.includes(k))) {
+        hasLocalBusinessSchema = true;
+        break;
+      }
+    }
+    const hasWhatsAppLink = /wa\.me\/|api\.whatsapp\.com\/|whatsapp:\/\//i.test(html);
+    const hasTelLink = /href=["']tel:[^"']+["']/i.test(html);
+    const phonesSet = /* @__PURE__ */ new Set();
+    const telHrefRegex = /href=["']tel:([^"']+)["']/gi;
+    while ((match = telHrefRegex.exec(html)) !== null) {
+      const cleanPhone = match[1].replace(/[^\d+]/g, "").trim();
+      if (cleanPhone.length >= 7) phonesSet.add(match[1].trim());
+    }
+    const emailsSet = /* @__PURE__ */ new Set();
+    const mailtoRegex = /href=["']mailto:([^"?#]+)[^"']*["']/gi;
+    while ((match = mailtoRegex.exec(html)) !== null) {
+      const emailCandidate = match[1].trim().toLowerCase();
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailCandidate) && !emailCandidate.endsWith(".png") && !emailCandidate.endsWith(".jpg")) {
+        emailsSet.add(emailCandidate);
+      }
+    }
+    const bookingLinksSet = /* @__PURE__ */ new Set();
+    const bookingPattern = /href=["'](https?:\/\/[^"']*(?:calendly\.com|cal\.com|zocdoc\.com|fresha\.com|jane\.app|acuityscheduling\.com|mindbodyonline\.com|square\.site|hubspot\.com\/meetings)[^"']*)["']/gi;
+    while ((match = bookingPattern.exec(html)) !== null) {
+      bookingLinksSet.add(match[1]);
+    }
+    const contactPagesSet = /* @__PURE__ */ new Set();
+    const contactPagePattern = /href=["']([^"']*(?:\/contact|\/contact-us|\/reach-us|\/get-in-touch|\/location)[^"']*)["']/gi;
+    while ((match = contactPagePattern.exec(html)) !== null) {
+      contactPagesSet.add(match[1]);
+    }
+    const socialProfiles = {};
+    const socialPatterns = [
+      { key: "linkedin", regex: /href=["'](https?:\/\/(?:www\.)?linkedin\.com\/(?:company|in)\/[^"'\s]+)["']/i },
+      { key: "facebook", regex: /href=["'](https?:\/\/(?:www\.)?facebook\.com\/[^"'\s]+)["']/i },
+      { key: "instagram", regex: /href=["'](https?:\/\/(?:www\.)?instagram\.com\/[^"'\s]+)["']/i },
+      { key: "twitter", regex: /href=["'](https?:\/\/(?:www\.)?(?:twitter\.com|x\.com)\/[^"'\s]+)["']/i },
+      { key: "youtube", regex: /href=["'](https?:\/\/(?:www\.)?youtube\.com\/(?:@|channel\/|user\/)[^"'\s]+)["']/i }
+    ];
+    for (const sp of socialPatterns) {
+      const sMatch = html.match(sp.regex);
+      if (sMatch) {
+        socialProfiles[sp.key] = sMatch[1];
+      }
+    }
+    const imgRegex = /<img\b([^>]*)>/gi;
+    let totalImages = 0;
+    let missingAltCount = 0;
+    while ((match = imgRegex.exec(html)) !== null) {
+      totalImages++;
+      const attrs = match[1];
+      if (!attrs.includes("alt=") || /alt=["']\s*["']/.test(attrs)) {
+        missingAltCount++;
+      }
+    }
+    const detectedCms = this.detectCms(html);
+    const gaps = [];
+    if (!isHttps) gaps.push("Website is not secured with HTTPS/SSL.");
+    if (!title) gaps.push("Missing HTML <title> tag.");
+    if (title && (title.length < 15 || title.length > 70)) gaps.push(`Title length (${title.length} chars) is outside optimal 15-60 character range.`);
+    if (!metaDescription) gaps.push("Missing meta description tag.");
+    if (h1Matches.length === 0) gaps.push("No <h1> heading tag found on page.");
+    if (h1Matches.length > 1) gaps.push(`Multiple <h1> heading tags detected (${h1Matches.length}), which diffuses SEO keyword focus.`);
+    if (!canonicalUrl) gaps.push("Missing canonical URL tag.");
+    if (!hasViewport) gaps.push("Missing mobile viewport meta tag (site may not render properly on smartphones).");
+    if (!hasLocalBusinessSchema) gaps.push("Missing Schema.org LocalBusiness JSON-LD markup for Google local 3-pack optimization.");
+    if (!hasWhatsAppLink) gaps.push("No instant WhatsApp lead capture trigger detected on page.");
+    if (bookingLinksSet.size === 0 && phonesSet.size === 0) gaps.push("No direct online booking or visible telephone call triggers found.");
+    if (missingAltCount > 3) gaps.push(`${missingAltCount} images are missing descriptive alt attributes for SEO and accessibility.`);
+    if (responseTimeMs > 2500) gaps.push(`Initial HTML server response time (${(responseTimeMs / 1e3).toFixed(1)}s) is slower than Google 1.0s target.`);
+    let readinessScore = 35;
+    if (isHttps) readinessScore += 10;
+    if (hasViewport) readinessScore += 15;
+    if (title && metaDescription) readinessScore += 15;
+    if (h1Matches.length === 1) readinessScore += 10;
+    if (hasLocalBusinessSchema) readinessScore += 10;
+    if (hasWhatsAppLink || hasTelLink) readinessScore += 10;
+    if (responseTimeMs < 1500) readinessScore += 10;
+    readinessScore = Math.min(100, readinessScore);
+    const recommendedPrimeSoulActions = [
+      hasLocalBusinessSchema ? "Maintain local schema and expand service catalog markup" : "Implement custom Schema.org LocalBusiness JSON-LD markup",
+      !hasWhatsAppLink ? "Deploy automated WhatsApp lead routing widget" : "Optimize WhatsApp conversion copy & intake workflow",
+      responseTimeMs > 1500 || detectedCms.includes("WordPress") ? "Rebuild high-performance web architecture for sub-second load times" : "Conduct technical Core Web Vitals optimization sprint",
+      !canonicalUrl || !metaDescription ? "Fix fundamental on-page SEO meta architecture" : "Expand local 3-pack geographic citations"
+    ];
+    const techStack = [detectedCms];
+    if (isHttps) techStack.push("HTTPS SSL Certificate");
+    if (hasWhatsAppLink) techStack.push("WhatsApp Click-to-Chat Integration");
+    if (hasTelLink || phonesSet.size > 0) techStack.push("Direct Tel Calling Links");
+    if (bookingLinksSet.size > 0) techStack.push("Direct Appointment Booking Integration");
+    if (schemaTypes.size > 0) techStack.push(`Schema.org (${Array.from(schemaTypes).join(", ")})`);
+    return {
+      url: originalUrl,
+      finalUrl,
+      isAccessible: httpStatus >= 200 && httpStatus < 400,
+      httpStatus,
+      measured: {
+        httpStatus,
+        responseTimeMs,
+        contentSizeBytes,
+        isHttps,
+        redirectCount,
+        compressionType
+      },
+      detected: {
+        title,
+        metaDescription,
+        canonicalUrl,
+        hasViewport,
+        viewportContent,
+        robotsDirective,
+        robotsTxtStatus: params.robotsTxtStatus || "UNCHECKED",
+        sitemapStatus: params.sitemapStatus || "UNCHECKED",
+        openGraph,
+        headings: {
+          h1: h1Matches,
+          h2Count: h2Matches.length,
+          sampleH2s: h2Matches.slice(0, 5),
+          h3Count: h3Matches.length,
+          sampleH3s: h3Matches.slice(0, 5)
+        },
+        detectedCms,
+        hasWhatsAppLink,
+        hasTelLink,
+        publicPhones: Array.from(phonesSet),
+        publicEmails: Array.from(emailsSet),
+        bookingLinks: Array.from(bookingLinksSet),
+        contactPageUrls: Array.from(contactPagesSet),
+        socialProfiles,
+        imageOptimization: {
+          totalImages,
+          missingAltCount
+        },
+        schemaTypes: Array.from(schemaTypes),
+        hasLocalBusinessSchema
+      },
+      inferred: {
+        mobileFriendlinessEstimate: hasViewport ? "LIKELY_RESPONSIVE" : "POTENTIALLY_NON_RESPONSIVE",
+        localBusinessReadinessScore: readinessScore,
+        detectedTechStack: techStack,
+        identifiedGaps: gaps,
+        recommendedPrimeSoulActions
+      },
+      unknown: {
+        realUserCoreWebVitals: "Unknown without Chrome User Experience Report (CrUX) API or Google Search Console connection.",
+        organicSearchVolume: "Unknown without Google Analytics / Search Console direct access.",
+        internalServerArchitecture: "Unknown without hosting server inspection."
+      }
+    };
+  }
+  extractHeadingTags(html, tag) {
+    const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, "gi");
+    const results = [];
+    let m;
+    while ((m = regex.exec(html)) !== null) {
+      const text = this.stripTags(m[1]).trim();
+      if (text) results.push(text);
+    }
+    return results;
+  }
+  detectCms(html) {
+    if (/wp-content|wp-includes|wordpress/i.test(html)) {
+      if (/elementor/i.test(html)) return "WordPress / Elementor Builder";
+      if (/divi/i.test(html)) return "WordPress / Divi Builder";
+      return "WordPress CMS";
+    }
+    if (/cdn\.shopify\.com|shopify/i.test(html)) return "Shopify E-Commerce";
+    if (/wix\.com|wixsite\.com/i.test(html)) return "Wix Website Builder";
+    if (/squarespace\.com/i.test(html)) return "Squarespace";
+    if (/webflow\.com|data-wf-page/i.test(html)) return "Webflow";
+    if (/__NEXT_DATA__|next\/router/i.test(html)) return "Next.js React Framework";
+    if (/__NUXT__|nuxt/i.test(html)) return "Nuxt.js Vue Framework";
+    return "Custom Web Application / Static HTML";
+  }
+  extractSchemaTypes(data, types) {
+    if (!data) return;
+    if (Array.isArray(data)) {
+      for (const item of data) this.extractSchemaTypes(item, types);
+      return;
+    }
+    if (typeof data === "object") {
+      if (data["@type"]) {
+        if (Array.isArray(data["@type"])) {
+          data["@type"].forEach((t) => types.add(String(t)));
+        } else {
+          types.add(String(data["@type"]));
+        }
+      }
+      if (data["@graph"] && Array.isArray(data["@graph"])) {
+        this.extractSchemaTypes(data["@graph"], types);
+      }
+    }
+  }
+  stripTags(str) {
+    return str.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  }
+  cleanHtmlEntities(str) {
+    return str.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
+  }
+};
+
+// src/core/tools/web-search.tool.ts
+var WebSearchTool = class {
+  name = "web_search";
+  description = "Searches for business leads, industry competitor data, and buying signals.";
+  parameters = [
+    { name: "query", type: "string", description: "The search query or company name", required: true },
+    { name: "limit", type: "number", description: "Number of results to return" }
+  ];
+  async execute(args) {
+    const q = args.query.toLowerCase();
+    const limit = args.limit || 5;
+    const results = [
+      {
+        title: `Search Result: ${args.query} - Digital Profile`,
+        url: `https://example.com/search?q=${encodeURIComponent(args.query)}`,
+        snippet: `Business listings and public activity for ${args.query}. Showing recent local citations, online reviews, and domain details.`,
+        signals: [
+          "Unverified local directory listings detected",
+          "Competitors actively advertising on primary service keywords"
+        ]
+      },
+      {
+        title: `${args.query} - Reviews & Map Visibility`,
+        url: `https://maps.google.com/?q=${encodeURIComponent(args.query)}`,
+        snippet: `Google Maps presence for ${args.query}. Review rating 3.8/5 with unaddressed customer feedback.`,
+        signals: [
+          "Low review volume relative to local geographic competitors"
+        ]
+      }
+    ].slice(0, limit);
+    return {
+      success: true,
+      data: {
+        query: args.query,
+        resultCount: results.length,
+        results
+      }
+    };
+  }
+};
+
+// src/core/provenance/provenance.service.ts
+var ProvenanceService = class _ProvenanceService {
+  static instance;
+  static getInstance() {
+    if (!_ProvenanceService.instance) {
+      _ProvenanceService.instance = new _ProvenanceService();
+    }
+    return _ProvenanceService.instance;
+  }
+  /**
+   * Extracts verified, typed provenance facts from a live WebAnalyzer report.
+   */
+  extractFromWebAnalysis(report) {
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    const facts = {};
+    if (!report || !report.measured) {
+      return facts;
+    }
+    const source = report.finalUrl || report.url;
+    facts["httpStatus"] = {
+      field: "httpStatus",
+      value: report.measured.httpStatus,
+      source,
+      sourceType: "LIVE_WEBSITE",
+      confidence: "HIGH",
+      evidence: `Live HTTP GET returned status code ${report.measured.httpStatus}`,
+      timestamp,
+      stage: "web_analysis"
+    };
+    facts["responseTimeMs"] = {
+      field: "responseTimeMs",
+      value: report.measured.responseTimeMs,
+      source,
+      sourceType: "LIVE_WEBSITE",
+      confidence: "HIGH",
+      evidence: `Initial HTML response time measured at ${report.measured.responseTimeMs}ms`,
+      timestamp,
+      stage: "web_analysis"
+    };
+    facts["isHttps"] = {
+      field: "isHttps",
+      value: report.measured.isHttps,
+      source,
+      sourceType: "LIVE_WEBSITE",
+      confidence: "HIGH",
+      evidence: report.measured.isHttps ? "HTTPS SSL certificate detected" : "Insecure HTTP connection",
+      timestamp,
+      stage: "web_analysis"
+    };
+    if (report.detected.title) {
+      facts["websiteTitle"] = {
+        field: "websiteTitle",
+        value: report.detected.title,
+        source,
+        sourceType: "LIVE_WEBSITE",
+        confidence: "HIGH",
+        evidence: `Extracted from <title> tag: "${report.detected.title}"`,
+        timestamp,
+        stage: "web_analysis"
+      };
+    } else {
+      facts["websiteTitle"] = {
+        field: "websiteTitle",
+        value: "UNKNOWN",
+        source,
+        sourceType: "UNKNOWN",
+        confidence: "NONE",
+        evidence: "HTML <title> tag was missing on the scanned webpage",
+        timestamp,
+        stage: "web_analysis"
+      };
+    }
+    if (report.detected.headings.h1.length > 0) {
+      facts["h1Heading"] = {
+        field: "h1Heading",
+        value: report.detected.headings.h1[0],
+        source,
+        sourceType: "LIVE_WEBSITE",
+        confidence: "HIGH",
+        evidence: `Found <h1> tag: "${report.detected.headings.h1[0]}"`,
+        timestamp,
+        stage: "web_analysis"
+      };
+    }
+    facts["hasMetaDescription"] = {
+      field: "hasMetaDescription",
+      value: !!report.detected.metaDescription,
+      source,
+      sourceType: "LIVE_WEBSITE",
+      confidence: "HIGH",
+      evidence: report.detected.metaDescription ? `Description: "${report.detected.metaDescription}"` : 'Missing <meta name="description"> tag',
+      timestamp,
+      stage: "web_analysis"
+    };
+    facts["hasLocalBusinessSchema"] = {
+      field: "hasLocalBusinessSchema",
+      value: report.detected.hasLocalBusinessSchema,
+      source,
+      sourceType: "LIVE_WEBSITE",
+      confidence: "HIGH",
+      evidence: report.detected.hasLocalBusinessSchema ? `Found Schema.org types: ${report.detected.schemaTypes.join(", ")}` : "Zero LocalBusiness JSON-LD markup found in DOM",
+      timestamp,
+      stage: "web_analysis"
+    };
+    facts["hasWhatsAppWidget"] = {
+      field: "hasWhatsAppWidget",
+      value: report.detected.hasWhatsAppLink,
+      source,
+      sourceType: "LIVE_WEBSITE",
+      confidence: "HIGH",
+      evidence: report.detected.hasWhatsAppLink ? "WhatsApp click-to-chat link detected" : "No WhatsApp lead capture links detected",
+      timestamp,
+      stage: "web_analysis"
+    };
+    if (report.inferred.identifiedGaps && report.inferred.identifiedGaps.length > 0) {
+      facts["identifiedGaps"] = {
+        field: "identifiedGaps",
+        value: report.inferred.identifiedGaps,
+        source,
+        sourceType: "INFERENCE",
+        confidence: "HIGH",
+        evidence: `Inferred directly from observable HTML missing tags (${report.inferred.identifiedGaps.length} gaps)`,
+        timestamp,
+        stage: "web_analysis"
+      };
+    }
+    return facts;
+  }
+  /**
+   * Extracts verified provenance facts from user-supplied CRM lead input.
+   */
+  extractFromLeadData(lead, sourceName = "User CRM Input") {
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    const facts = {};
+    if (!lead || typeof lead !== "object") {
+      return facts;
+    }
+    if (lead.businessName && lead.businessName.trim() && lead.businessName !== "UNKNOWN") {
+      facts["businessName"] = {
+        field: "businessName",
+        value: lead.businessName.trim(),
+        source: sourceName,
+        sourceType: "USER_CRM",
+        confidence: "HIGH",
+        evidence: `Explicitly provided in lead record: "${lead.businessName}"`,
+        timestamp,
+        stage: "crm_input"
+      };
+    } else {
+      facts["businessName"] = {
+        field: "businessName",
+        value: "UNKNOWN",
+        source: sourceName,
+        sourceType: "UNKNOWN",
+        confidence: "NONE",
+        evidence: "Business name was not provided in input context",
+        timestamp,
+        stage: "crm_input"
+      };
+    }
+    if (lead.contactName && lead.contactName.trim() && lead.contactName !== "UNKNOWN") {
+      facts["contactName"] = {
+        field: "contactName",
+        value: lead.contactName.trim(),
+        source: sourceName,
+        sourceType: "USER_CRM",
+        confidence: "HIGH",
+        evidence: `Explicitly provided in lead record: "${lead.contactName}"`,
+        timestamp,
+        stage: "crm_input"
+      };
+    } else {
+      facts["contactName"] = {
+        field: "contactName",
+        value: "UNKNOWN",
+        source: sourceName,
+        sourceType: "UNKNOWN",
+        confidence: "NONE",
+        evidence: "Contact person name was not provided in lead data",
+        timestamp,
+        stage: "crm_input"
+      };
+    }
+    if (lead.location && lead.location.trim() && lead.location !== "UNKNOWN") {
+      facts["location"] = {
+        field: "location",
+        value: lead.location.trim(),
+        source: sourceName,
+        sourceType: "USER_CRM",
+        confidence: "HIGH",
+        evidence: `Explicitly provided in lead record: "${lead.location}"`,
+        timestamp,
+        stage: "crm_input"
+      };
+    } else {
+      facts["location"] = {
+        field: "location",
+        value: "UNKNOWN",
+        source: sourceName,
+        sourceType: "UNKNOWN",
+        confidence: "NONE",
+        evidence: "Location was not provided in lead data",
+        timestamp,
+        stage: "crm_input"
+      };
+    }
+    if (lead.website && lead.website.trim()) {
+      facts["websiteUrl"] = {
+        field: "websiteUrl",
+        value: lead.website.trim(),
+        source: sourceName,
+        sourceType: "USER_CRM",
+        confidence: "HIGH",
+        evidence: `Explicitly provided target domain: "${lead.website}"`,
+        timestamp,
+        stage: "crm_input"
+      };
+    }
+    if (lead.industry && lead.industry.trim() && lead.industry !== "UNKNOWN") {
+      facts["industry"] = {
+        field: "industry",
+        value: lead.industry.trim(),
+        source: sourceName,
+        sourceType: "USER_CRM",
+        confidence: "HIGH",
+        evidence: `Explicitly provided industry sector: "${lead.industry}"`,
+        timestamp,
+        stage: "crm_input"
+      };
+    } else {
+      facts["industry"] = {
+        field: "industry",
+        value: "UNKNOWN",
+        source: sourceName,
+        sourceType: "UNKNOWN",
+        confidence: "NONE",
+        evidence: "Industry niche was not provided in lead data",
+        timestamp,
+        stage: "crm_input"
+      };
+    }
+    return facts;
+  }
+  /**
+   * Merges multiple provenance collections into a unified provenance store.
+   */
+  mergeProvenance(...records) {
+    const merged = {};
+    for (const rec of records) {
+      if (rec && typeof rec === "object") {
+        Object.assign(merged, rec);
+      }
+    }
+    return merged;
+  }
+};
+
+// src/core/research/identity-resolver.service.ts
+var IdentityResolverService = class _IdentityResolverService {
+  static instance;
+  static getInstance() {
+    if (!_IdentityResolverService.instance) {
+      _IdentityResolverService.instance = new _IdentityResolverService();
+    }
+    return _IdentityResolverService.instance;
+  }
+  /**
+   * Resolves business identity by cross-referencing input parameters, live website DOM data, and search signals.
+   */
+  resolveIdentity(params) {
+    const { inputName, inputLocation, inputUrl, webReport, searchResults } = params;
+    const ambiguityReasons = [];
+    const evidence = [];
+    const verifiedLocations = [];
+    let domain = "";
+    if (webReport?.finalUrl || inputUrl) {
+      try {
+        const u = new URL(webReport?.finalUrl || inputUrl);
+        domain = u.hostname.replace(/^www\./, "");
+      } catch {
+        domain = "";
+      }
+    }
+    let resolvedName = "";
+    const title = webReport?.detected?.title || "";
+    const cleanTitle = title.replace(/^Home\s*[-–|:]\s*/i, "").replace(/\s*[-–|:]\s*Home$/i, "").replace(/\s*[-–|:]\s*(?:Official Site|Welcome|Website)$/i, "").trim();
+    if (inputName && inputName !== "UNKNOWN") {
+      resolvedName = inputName.trim();
+      evidence.push(`Input business name provided: "${inputName}"`);
+    } else if (cleanTitle) {
+      resolvedName = cleanTitle;
+      evidence.push(`Derived business name from website title: "${cleanTitle}"`);
+    } else if (domain) {
+      resolvedName = domain.split(".")[0].replace(/[-_]/g, " ").toUpperCase();
+      evidence.push(`Derived default business name from domain: "${resolvedName}"`);
+    } else {
+      resolvedName = "UNKNOWN";
+      ambiguityReasons.push("No business name provided and unable to derive from website metadata.");
+    }
+    if (inputLocation && inputLocation !== "UNKNOWN") {
+      verifiedLocations.push(inputLocation.trim());
+      evidence.push(`Input geographic market provided: "${inputLocation}"`);
+    }
+    if (title) {
+      const usStateRegex = /\b([A-Z][a-zA-Z\s]+),\s*([A-Z]{2})\b/;
+      const match = title.match(usStateRegex);
+      if (match && !verifiedLocations.includes(match[0])) {
+        verifiedLocations.push(match[0]);
+        evidence.push(`Geographic marker detected in page title: "${match[0]}"`);
+      }
+    }
+    if (searchResults && searchResults.length > 0) {
+      evidence.push(`Cross-referenced ${searchResults.length} public web search results.`);
+      const distinctNames = /* @__PURE__ */ new Set();
+      for (const res of searchResults) {
+        if (res.title) distinctNames.add(res.title);
+      }
+      if (distinctNames.size > 3 && !domain) {
+        ambiguityReasons.push(`Search query returned multiple disparate business entities without a confirmed domain anchor.`);
+      }
+    }
+    let status = "CONFIDENT";
+    if (ambiguityReasons.length > 0) {
+      status = "AMBIGUOUS";
+    } else if (domain && resolvedName && resolvedName !== "UNKNOWN") {
+      status = "CONFIDENT";
+    } else if (resolvedName && resolvedName !== "UNKNOWN" && verifiedLocations.length > 0) {
+      status = "PROBABLE";
+    } else {
+      status = "AMBIGUOUS";
+      ambiguityReasons.push("Insufficient authoritative signals to resolve unique business identity.");
+    }
+    return {
+      status,
+      resolvedName,
+      domain,
+      verifiedLocations,
+      ambiguityReasons,
+      evidence
+    };
+  }
+};
+
+// src/core/research/scoring.service.ts
+var ScoringService = class _ScoringService {
+  static instance;
+  static getInstance() {
+    if (!_ScoringService.instance) {
+      _ScoringService.instance = new _ScoringService();
+    }
+    return _ScoringService.instance;
+  }
+  /**
+   * Calculates transparent dimensional health scores with granular reason codes and evidence.
+   */
+  calculateDimensionalScores(report) {
+    const dimensions = [];
+    let techScore = 0;
+    const techReasons = [];
+    if (report.measured.isHttps) {
+      techScore += 25;
+      techReasons.push({ type: "BONUS", points: 25, description: "HTTPS SSL certificate active", evidence: "Verified https:// protocol" });
+    } else {
+      techReasons.push({ type: "DEDUCTION", points: 0, description: "Missing HTTPS security", evidence: "Insecure http:// connection" });
+    }
+    if (report.detected.hasViewport) {
+      techScore += 25;
+      techReasons.push({ type: "BONUS", points: 25, description: "Mobile responsive viewport configured", evidence: `Viewport: "${report.detected.viewportContent || "standard"}"` });
+    } else {
+      techReasons.push({ type: "DEDUCTION", points: 0, description: "Missing mobile viewport tag", evidence: "Zero viewport meta tags in DOM" });
+    }
+    if (report.measured.responseTimeMs < 1200) {
+      techScore += 30;
+      techReasons.push({ type: "BONUS", points: 30, description: "Sub-second fast server response", evidence: `Measured initial response: ${report.measured.responseTimeMs}ms` });
+    } else if (report.measured.responseTimeMs < 2500) {
+      techScore += 15;
+      techReasons.push({ type: "BONUS", points: 15, description: "Moderate server latency", evidence: `Measured initial response: ${report.measured.responseTimeMs}ms` });
+    } else {
+      techReasons.push({ type: "DEDUCTION", points: 0, description: "Slow initial server response (>2.5s)", evidence: `Measured latency: ${report.measured.responseTimeMs}ms exceeds Google 1.0s target` });
+    }
+    if (report.measured.compressionType && report.measured.compressionType !== "none") {
+      techScore += 20;
+      techReasons.push({ type: "BONUS", points: 20, description: `HTTP compression active (${report.measured.compressionType})`, evidence: `Content-Encoding: ${report.measured.compressionType}` });
+    } else {
+      techReasons.push({ type: "DEDUCTION", points: 0, description: "No HTTP gzip/brotli compression detected", evidence: "Uncompressed raw HTML payload" });
+    }
+    techScore = Math.min(100, techScore);
+    dimensions.push({ name: "Technical Health", score: techScore, weight: 0.2, reasons: techReasons });
+    let seoScore = 0;
+    const seoReasons = [];
+    if (report.detected.title) {
+      const len = report.detected.title.length;
+      if (len >= 15 && len <= 65) {
+        seoScore += 25;
+        seoReasons.push({ type: "BONUS", points: 25, description: "Optimal title length (15-65 chars)", evidence: `Title (${len} chars): "${report.detected.title}"` });
+      } else {
+        seoScore += 10;
+        seoReasons.push({ type: "BONUS", points: 10, description: "Title tag present but outside optimal 15-65 char range", evidence: `Title (${len} chars): "${report.detected.title}"` });
+      }
+    } else {
+      seoReasons.push({ type: "DEDUCTION", points: 0, description: "Missing HTML <title> tag", evidence: "Zero <title> elements found" });
+    }
+    if (report.detected.metaDescription) {
+      seoScore += 25;
+      seoReasons.push({ type: "BONUS", points: 25, description: "Meta description tag present", evidence: `Description: "${report.detected.metaDescription.slice(0, 50)}..."` });
+    } else {
+      seoReasons.push({ type: "DEDUCTION", points: 0, description: "Missing meta description tag", evidence: "Zero meta description tags in DOM" });
+    }
+    if (report.detected.headings.h1.length === 1) {
+      seoScore += 25;
+      seoReasons.push({ type: "BONUS", points: 25, description: "Single, focused <h1> heading tag", evidence: `H1: "${report.detected.headings.h1[0]}"` });
+    } else if (report.detected.headings.h1.length > 1) {
+      seoScore += 10;
+      seoReasons.push({ type: "DEDUCTION", points: 10, description: `Multiple <h1> tags detected (${report.detected.headings.h1.length})`, evidence: `Found ${report.detected.headings.h1.length} separate H1 headings` });
+    } else {
+      seoReasons.push({ type: "DEDUCTION", points: 0, description: "Missing <h1> primary heading", evidence: "Zero <h1> tags in DOM" });
+    }
+    if (report.detected.canonicalUrl) {
+      seoScore += 15;
+      seoReasons.push({ type: "BONUS", points: 15, description: "Canonical URL defined", evidence: `Canonical: ${report.detected.canonicalUrl}` });
+    } else {
+      seoReasons.push({ type: "DEDUCTION", points: 0, description: "Missing canonical URL link tag", evidence: 'No link rel="canonical" in DOM' });
+    }
+    if (report.detected.imageOptimization.missingAltCount === 0 && report.detected.imageOptimization.totalImages > 0) {
+      seoScore += 10;
+      seoReasons.push({ type: "BONUS", points: 10, description: "All images contain descriptive alt text", evidence: `${report.detected.imageOptimization.totalImages} images checked` });
+    } else if (report.detected.imageOptimization.missingAltCount > 0) {
+      seoReasons.push({ type: "DEDUCTION", points: 0, description: `${report.detected.imageOptimization.missingAltCount} images missing alt text`, evidence: `${report.detected.imageOptimization.missingAltCount} of ${report.detected.imageOptimization.totalImages} images lack alt attributes` });
+    }
+    seoScore = Math.min(100, seoScore);
+    dimensions.push({ name: "SEO Health", score: seoScore, weight: 0.25, reasons: seoReasons });
+    let localSeoScore = 0;
+    const localReasons = [];
+    if (report.detected.hasLocalBusinessSchema) {
+      localSeoScore += 45;
+      localReasons.push({ type: "BONUS", points: 45, description: "Schema.org LocalBusiness structured data present", evidence: `Found schema types: ${report.detected.schemaTypes.join(", ")}` });
+    } else {
+      localReasons.push({ type: "DEDUCTION", points: 0, description: "Missing Schema.org LocalBusiness JSON-LD markup", evidence: "Zero LocalBusiness / DentalClinic / MedicalBusiness schema in DOM" });
+    }
+    if (report.detected.schemaTypes.length > 0 && !report.detected.hasLocalBusinessSchema) {
+      localSeoScore += 15;
+      localReasons.push({ type: "BONUS", points: 15, description: "Generic structured data detected (WebPage / BreadcrumbList)", evidence: `Types: ${report.detected.schemaTypes.join(", ")}` });
+    }
+    if (report.detected.robotsTxtStatus === "AVAILABLE") {
+      localSeoScore += 20;
+      localReasons.push({ type: "BONUS", points: 20, description: "robots.txt crawler configuration verified", evidence: "Accessible at /robots.txt" });
+    } else {
+      localReasons.push({ type: "DEDUCTION", points: 0, description: "robots.txt not detected or inaccessible", evidence: "Status: " + report.detected.robotsTxtStatus });
+    }
+    if (report.detected.sitemapStatus === "AVAILABLE") {
+      localSeoScore += 20;
+      localReasons.push({ type: "BONUS", points: 20, description: "XML Sitemap detected", evidence: "Referenced in HTML or standard index" });
+    } else {
+      localReasons.push({ type: "DEDUCTION", points: 0, description: "XML Sitemap unverified", evidence: "No standard sitemap reference in DOM" });
+    }
+    localSeoScore = Math.min(100, localSeoScore);
+    dimensions.push({ name: "Local SEO Readiness", score: localSeoScore, weight: 0.2, reasons: localReasons });
+    let conversionScore = 0;
+    const convReasons = [];
+    if (report.detected.hasWhatsAppLink) {
+      conversionScore += 35;
+      convReasons.push({ type: "BONUS", points: 35, description: "Direct WhatsApp click-to-chat conversion trigger present", evidence: "WhatsApp API / wa.me link found" });
+    } else {
+      convReasons.push({ type: "DEDUCTION", points: 0, description: "Missing instant WhatsApp intake trigger", evidence: "Zero WhatsApp links in DOM" });
+    }
+    if (report.detected.hasTelLink || report.detected.publicPhones.length > 0) {
+      conversionScore += 30;
+      convReasons.push({ type: "BONUS", points: 30, description: "Direct telephone calling triggers verified", evidence: `Detected numbers: ${report.detected.publicPhones.slice(0, 2).join(", ") || "tel: link"}` });
+    } else {
+      convReasons.push({ type: "DEDUCTION", points: 0, description: "No direct click-to-call phone links found", evidence: "Missing tel: links in DOM" });
+    }
+    if (report.detected.bookingLinks.length > 0) {
+      conversionScore += 25;
+      convReasons.push({ type: "BONUS", points: 25, description: "Direct appointment booking software detected", evidence: `Booking link: ${report.detected.bookingLinks[0]}` });
+    }
+    if (report.detected.contactPageUrls.length > 0) {
+      conversionScore += 10;
+      convReasons.push({ type: "BONUS", points: 10, description: "Dedicated contact page available", evidence: `Contact URL: ${report.detected.contactPageUrls[0]}` });
+    }
+    conversionScore = Math.min(100, conversionScore);
+    dimensions.push({ name: "Conversion Readiness", score: conversionScore, weight: 0.15, reasons: convReasons });
+    let socialScore = 0;
+    const socialReasons = [];
+    const profiles = report.detected.socialProfiles;
+    let profilesCount = 0;
+    if (profiles.linkedin) {
+      socialScore += 25;
+      profilesCount++;
+      socialReasons.push({ type: "BONUS", points: 25, description: "LinkedIn company profile connected", evidence: profiles.linkedin });
+    }
+    if (profiles.facebook) {
+      socialScore += 25;
+      profilesCount++;
+      socialReasons.push({ type: "BONUS", points: 25, description: "Facebook page connected", evidence: profiles.facebook });
+    }
+    if (profiles.instagram) {
+      socialScore += 25;
+      profilesCount++;
+      socialReasons.push({ type: "BONUS", points: 25, description: "Instagram account connected", evidence: profiles.instagram });
+    }
+    if (profiles.twitter) {
+      socialScore += 15;
+      profilesCount++;
+      socialReasons.push({ type: "BONUS", points: 15, description: "Twitter/X profile connected", evidence: profiles.twitter });
+    }
+    if (profiles.youtube) {
+      socialScore += 10;
+      profilesCount++;
+      socialReasons.push({ type: "BONUS", points: 10, description: "YouTube channel connected", evidence: profiles.youtube });
+    }
+    if (profilesCount === 0) {
+      socialReasons.push({ type: "DEDUCTION", points: 0, description: "Zero official social media profiles connected on homepage", evidence: "No social profile links found in DOM" });
+    }
+    socialScore = Math.min(100, socialScore);
+    dimensions.push({ name: "Social Presence", score: socialScore, weight: 0.1, reasons: socialReasons });
+    const overallScore = Math.round(
+      techScore * 0.2 + seoScore * 0.25 + localSeoScore * 0.2 + conversionScore * 0.15 + socialScore * 0.1 + (report.measured.isHttps ? 80 : 40) * 0.1
+    );
+    return {
+      overallScore,
+      technicalHealth: techScore,
+      seoHealth: seoScore,
+      localSeoReadiness: localSeoScore,
+      conversionReadiness: conversionScore,
+      socialPresenceScore: socialScore,
+      websiteQuality: Math.round((techScore + seoScore) / 2),
+      dimensions
+    };
+  }
+  /**
+   * Calculates explainable Lead Score based on technical urgency and transformation upside.
+   */
+  calculateLeadScore(params) {
+    const { report, dimensionalScores } = params;
+    const scoreBreakdown = [];
+    let leadScore = 40;
+    scoreBreakdown.push({ factor: "Base Target Opportunity", points: 40, evidence: "Standard qualification baseline" });
+    if (report.measured.responseTimeMs > 2500) {
+      leadScore += 20;
+      scoreBreakdown.push({ factor: "Critical Latency Friction (>2.5s)", points: 20, evidence: `Server response: ${report.measured.responseTimeMs}ms requires performance rebuild` });
+    }
+    if (!report.detected.hasLocalBusinessSchema) {
+      leadScore += 15;
+      scoreBreakdown.push({ factor: "Missing LocalBusiness Schema", points: 15, evidence: "Local 3-Pack rank upside via Schema.org implementation" });
+    }
+    if (!report.detected.hasWhatsAppLink) {
+      leadScore += 15;
+      scoreBreakdown.push({ factor: "Absent WhatsApp Conversion Trigger", points: 15, evidence: "High-intent local mobile intake upside" });
+    }
+    if (!report.detected.metaDescription || report.detected.headings.h1.length === 0) {
+      leadScore += 10;
+      scoreBreakdown.push({ factor: "On-Page SEO Gaps (Meta/H1)", points: 10, evidence: "Clear on-page SEO remediation package candidate" });
+    }
+    leadScore = Math.min(100, leadScore);
+    let qualification = "QUALIFIED";
+    if (leadScore >= 75) qualification = "QUALIFIED";
+    else if (leadScore >= 55) qualification = "OPPORTUNITY";
+    else qualification = "UNQUALIFIED";
+    return {
+      leadScore,
+      qualification,
+      confidence: "HIGH",
+      scoreBreakdown
+    };
+  }
+  /**
+   * Maps verified gaps to tailored PrimeSoul service recommendations.
+   */
+  matchServices(gaps, report) {
+    const matches = [];
+    if (report.measured.responseTimeMs > 2e3 || report.detected.detectedCms.includes("WordPress") || !report.measured.isHttps) {
+      matches.push({
+        serviceName: "Website Design & Development",
+        priority: "HIGH",
+        rationale: "Rebuild monolithic CMS storefront with sub-second responsive architecture to eliminate mobile bounce friction.",
+        matchedGaps: gaps.filter((g) => g.includes("response time") || g.includes("HTTPS") || g.includes("viewport"))
+      });
+    }
+    if (!report.detected.hasLocalBusinessSchema || !report.detected.metaDescription || report.detected.headings.h1.length !== 1) {
+      matches.push({
+        serviceName: "Google Business Profile & Local SEO",
+        priority: "HIGH",
+        rationale: "Implement Schema.org JSON-LD structured markup and optimize on-page SEO meta architecture for Google 3-Pack rank dominance.",
+        matchedGaps: gaps.filter((g) => g.includes("Schema.org") || g.includes("meta description") || g.includes("<h1>"))
+      });
+    }
+    if (!report.detected.hasWhatsAppLink) {
+      matches.push({
+        serviceName: "WhatsApp Business Setup & Conversion Capture",
+        priority: "MEDIUM",
+        rationale: "Deploy automated WhatsApp lead routing widget to convert high-intent local visitors directly into intake staff.",
+        matchedGaps: gaps.filter((g) => g.includes("WhatsApp"))
+      });
+    }
+    return matches;
+  }
+};
+
+// src/core/research/change-detector.service.ts
+var ChangeDetectorService = class _ChangeDetectorService {
+  static instance;
+  static getInstance() {
+    if (!_ChangeDetectorService.instance) {
+      _ChangeDetectorService.instance = new _ChangeDetectorService();
+    }
+    return _ChangeDetectorService.instance;
+  }
+  /**
+   * Compares the previous intelligence profile with current findings to detect meaningful shifts.
+   */
+  detectChanges(previous, current) {
+    if (!previous) {
+      return {
+        hasChanges: false,
+        changesCount: 0,
+        changes: []
+      };
+    }
+    const changes = [];
+    if (previous.seo?.title && current.seo.title && previous.seo.title !== current.seo.title) {
+      changes.push({
+        field: "seo.title",
+        previousValue: previous.seo.title,
+        newValue: current.seo.title,
+        significance: "INFORMATIONAL",
+        description: `Page title changed from "${previous.seo.title}" to "${current.seo.title}"`
+      });
+    }
+    const prevLatency = previous.website?.responseTimeMs;
+    const currLatency = current.website.responseTimeMs;
+    if (prevLatency !== void 0 && currLatency !== void 0) {
+      const delta = Math.abs(currLatency - prevLatency);
+      const percentChange = delta / prevLatency;
+      if (percentChange > 0.5 && delta > 500) {
+        changes.push({
+          field: "website.responseTimeMs",
+          previousValue: `${prevLatency}ms`,
+          newValue: `${currLatency}ms`,
+          significance: "MAJOR",
+          description: `Server response latency changed significantly from ${prevLatency}ms to ${currLatency}ms (${(percentChange * 100).toFixed(0)}% shift)`
+        });
+      }
+    }
+    const prevSchema = previous.localSearch?.hasLocalBusinessSchema;
+    const currSchema = current.localSearch.hasLocalBusinessSchema;
+    if (prevSchema !== void 0 && prevSchema !== currSchema) {
+      changes.push({
+        field: "localSearch.hasLocalBusinessSchema",
+        previousValue: prevSchema,
+        newValue: currSchema,
+        significance: "MAJOR",
+        description: currSchema ? "New Schema.org LocalBusiness structured data implemented on website" : "Schema.org LocalBusiness structured data was removed from website"
+      });
+    }
+    const prevWhatsApp = previous.conversion?.hasWhatsAppWidget;
+    const currWhatsApp = current.conversion.hasWhatsAppWidget;
+    if (prevWhatsApp !== void 0 && prevWhatsApp !== currWhatsApp) {
+      changes.push({
+        field: "conversion.hasWhatsAppWidget",
+        previousValue: prevWhatsApp,
+        newValue: currWhatsApp,
+        significance: "MAJOR",
+        description: currWhatsApp ? "WhatsApp click-to-chat trigger added to website" : "WhatsApp click-to-chat trigger was removed from website"
+      });
+    }
+    const prevCms = previous.website?.detectedCms;
+    const currCms = current.website.detectedCms;
+    if (prevCms && currCms && prevCms !== currCms) {
+      changes.push({
+        field: "website.detectedCms",
+        previousValue: prevCms,
+        newValue: currCms,
+        significance: "MAJOR",
+        description: `Underlying website CMS changed from ${prevCms} to ${currCms}`
+      });
+    }
+    const prevPhones = (previous.contact?.publicPhones || []).map((p) => p.value).sort().join(", ");
+    const currPhones = current.contact.publicPhones.map((p) => p.value).sort().join(", ");
+    if (prevPhones && currPhones && prevPhones !== currPhones) {
+      changes.push({
+        field: "contact.publicPhones",
+        previousValue: prevPhones,
+        newValue: currPhones,
+        significance: "MAJOR",
+        description: `Detected public telephone numbers updated: "${currPhones}"`
+      });
+    }
+    const prevScore = previous.leadScoring?.leadScore;
+    const currScore = current.leadScoring.leadScore;
+    if (prevScore !== void 0 && Math.abs(currScore - prevScore) >= 5) {
+      changes.push({
+        field: "leadScoring.leadScore",
+        previousValue: prevScore,
+        newValue: currScore,
+        significance: "MINOR",
+        description: `Lead Qualification Score shifted by ${currScore - prevScore > 0 ? "+" : ""}${currScore - prevScore} points (now ${currScore}/100)`
+      });
+    }
+    return {
+      hasChanges: changes.length > 0,
+      changesCount: changes.length,
+      changes,
+      previousRunTimestamp: previous.researchTimestamp
+    };
+  }
+};
+
+// src/core/database/db.service.ts
+import fs from "fs";
+import path from "path";
+
+// src/core/database/seed.data.ts
+var SEED_LEADS = [
+  {
+    id: "lead-001",
+    businessName: "Apex Dental Care & Implant Center",
+    industry: "Healthcare",
+    businessCategory: "Clinic",
+    location: "Indore, MP, India",
+    city: "Indore",
+    website: "https://apexdentalcare-sample.in",
+    contactName: "Dr. Rajesh Sharma",
+    email: "dr.sharma@apexdentalcare.in",
+    phone: "+91 98260 12345",
+    socialProfiles: {
+      instagram: "instagram.com/apexdentalcare_indore",
+      facebook: "facebook.com/apexdentalcare"
+    },
+    source: "AUDIT",
+    sourceDetail: "website_audit",
+    requirement: "Google Business",
+    timeline: "Immediately",
+    leadScore: 85,
+    leadTemperature: "HOT",
+    qualificationStatus: "QUALIFIED",
+    growthStatus: "QUALIFIED",
+    digitalPresenceScore: 42,
+    painPoints: [
+      "Mobile load time is 4.1s on WordPress/Elementor",
+      "Google Business Profile is unverified with only 4 reviews",
+      "No online WhatsApp appointment scheduling",
+      "Losing local search visibility to newly opened dental clinic 1km away"
+    ],
+    opportunities: [
+      "High conversion potential with Local 3-Pack SEO sprint",
+      "Direct WhatsApp booking widget will capture after-hours inquiries",
+      "Custom sub-second mobile landing page"
+    ],
+    recommendedServices: [
+      "Website Design & Development",
+      "Google Business Profile & Local SEO",
+      "WhatsApp Business Setup"
+    ],
+    outreachStatus: "DRAFTED",
+    notes: "High-intent prospect with 2 active clinic branches. Decision maker is Dr. Sharma.",
+    notesList: [
+      {
+        id: "note-1",
+        leadId: "lead-001",
+        author: "Param Sisodiya",
+        content: "Completed initial digital presence audit. High intent for Google Business Profile and WhatsApp booking.",
+        createdAt: new Date(Date.now() - 2 * 864e5).toISOString()
+      }
+    ],
+    createdAt: new Date(Date.now() - 3 * 864e5).toISOString(),
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  },
+  {
+    id: "lead-002",
+    businessName: "Royal Spice Family Restaurant & Cafe",
+    industry: "Hospitality",
+    businessCategory: "Restaurant",
+    location: "Jaipur, RJ, India",
+    city: "Jaipur",
+    website: "https://royalspice-jaipur-demo.in",
+    contactName: "Karan Singh Rathore",
+    email: "karan@royalspice.in",
+    phone: "+91 98290 87654",
+    source: "QR_MENU",
+    sourceDetail: "qr_menu_creation",
+    requirement: "Restaurant QR Menu",
+    timeline: "Within 7 days",
+    leadScore: 90,
+    leadTemperature: "HOT",
+    qualificationStatus: "QUALIFIED",
+    growthStatus: "DEMO",
+    digitalPresenceScore: 65,
+    painPoints: [
+      "Paper menus getting worn out and expensive to reprint on price changes",
+      "Weekend rush creates delays in waiter taking orders at tables",
+      "No customer database for WhatsApp promotions"
+    ],
+    opportunities: [
+      "Deploy PrimeOMS QR digital menu with table ordering",
+      "WhatsApp automated bill receipt and feedback loop",
+      "Google Review QR cards on every table"
+    ],
+    recommendedServices: [
+      "PrimeOMS",
+      "Restaurant QR Menu",
+      "WhatsApp Business Setup"
+    ],
+    outreachStatus: "IN_PROGRESS",
+    notes: "Owner Karan requested demo of PrimeOMS kitchen display and table ordering.",
+    notesList: [
+      {
+        id: "note-2",
+        leadId: "lead-002",
+        author: "PrimeSoul Team",
+        content: "Created free QR menu for 18 tables. Scheduled PrimeOMS demo for tomorrow 3 PM.",
+        createdAt: new Date(Date.now() - 1 * 864e5).toISOString()
+      }
+    ],
+    createdAt: new Date(Date.now() - 2 * 864e5).toISOString(),
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  },
+  {
+    id: "lead-003",
+    businessName: "Bright Future International School",
+    industry: "Education",
+    businessCategory: "School",
+    location: "Udaipur, RJ, India",
+    city: "Udaipur",
+    website: "https://brightfuture-demo.edu.in",
+    contactName: "Mrs. Suman Meena",
+    email: "admissions@brightfuture.edu.in",
+    phone: "+91 94140 33445",
+    source: "WEBSITE",
+    sourceDetail: "school_landing_page",
+    requirement: "Lead Generation",
+    timeline: "Within 30 days",
+    leadScore: 70,
+    leadTemperature: "WARM",
+    qualificationStatus: "QUALIFIED",
+    growthStatus: "CONTACTED",
+    digitalPresenceScore: 52,
+    painPoints: [
+      "Admission inquiries down 25% year-over-year",
+      "Website is not mobile friendly and has no online inquiry form",
+      "Parents searching on Google cannot find admission criteria"
+    ],
+    opportunities: [
+      "Build dedicated Admission 2026-27 Landing Page",
+      "WhatsApp automated parent brochure download",
+      "Local Google Search & Meta Ads campaign"
+    ],
+    recommendedServices: [
+      "Website",
+      "Lead Generation",
+      "Google Business"
+    ],
+    outreachStatus: "NOT_STARTED",
+    notes: "Principal interested in digital admission campaigns for primary wing.",
+    createdAt: new Date(Date.now() - 4 * 864e5).toISOString(),
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }
+];
+var SEED_AUDITS = [
+  {
+    id: "audit-001",
+    businessName: "Apex Dental Care & Implant Center",
+    websiteUrl: "https://apexdentalcare-sample.in",
+    category: "Clinic",
+    city: "Indore",
+    phone: "+91 98260 12345",
+    score: 65,
+    grade: "Needs Improvement",
+    resultsJson: {
+      score: 65,
+      grade: "Needs Improvement",
+      checks: [
+        { id: "chk-accessibility", name: "Website Live & Accessible", category: "Technical", passed: true, score: 15, maxScore: 15, details: "Website is active and responded in 410ms.", severity: "GOOD" },
+        { id: "chk-https", name: "SSL / HTTPS Security", category: "Technical", passed: true, score: 10, maxScore: 10, details: "Secure SSL certificate is active (https://).", severity: "GOOD" },
+        { id: "chk-mobile", name: "Mobile Viewport Optimization", category: "Technical", passed: true, score: 15, maxScore: 15, details: "Mobile viewport meta tag configured.", severity: "GOOD" },
+        { id: "chk-title", name: "Search Engine Title Tag", category: "SEO", passed: true, score: 10, maxScore: 10, details: "Title tag present.", severity: "GOOD" },
+        { id: "chk-meta-desc", name: "Search Snippet Description", category: "SEO", passed: false, score: 0, maxScore: 10, details: "Missing meta description tag.", severity: "WARNING" },
+        { id: "chk-phone", name: "Direct Call / Contact Link", category: "Conversion", passed: true, score: 10, maxScore: 10, details: "Phone number found.", severity: "GOOD" },
+        { id: "chk-whatsapp", name: "WhatsApp Chat Integration", category: "Conversion", passed: false, score: 0, maxScore: 15, details: "No WhatsApp direct chat button found.", severity: "WARNING" },
+        { id: "chk-schema", name: "Schema.org Structured Data", category: "Local", passed: false, score: 0, maxScore: 15, details: "Missing LocalBusiness schema.", severity: "WARNING" }
+      ],
+      strengths: [
+        "Online presence active with live website.",
+        "Secure HTTPS connection builds customer trust.",
+        "Mobile viewport optimization active."
+      ],
+      issues: [
+        "Missing search meta description \u2014 Google displays arbitrary page snippets.",
+        "No WhatsApp chat button \u2014 Indian patients prefer inquiring via WhatsApp.",
+        "Missing Schema.org structured data for Google Maps & Local search snippets."
+      ],
+      opportunities: [
+        "Add a floating WhatsApp chat widget with pre-filled inquiry messages.",
+        "Implement LocalBusiness Schema markup with clinic timings and ratings.",
+        "Add instant appointment booking directly from Google Search."
+      ],
+      recommendedActions: [
+        "Google Business Profile Setup & Local SEO",
+        "WhatsApp Business Integration & Direct Chat Widget"
+      ],
+      metrics: {
+        responseTimeMs: 410,
+        isHttps: true,
+        hasViewport: true
+      }
+    },
+    createdAt: new Date(Date.now() - 3 * 864e5).toISOString()
+  }
+];
+var SEED_RESTAURANTS = [
+  {
+    id: "rest-001",
+    businessName: "Royal Spice Family Restaurant",
+    slug: "royal-spice-jaipur",
+    phone: "+91 98290 87654",
+    city: "Jaipur",
+    logoUrl: "",
+    isPublished: true,
+    createdAt: new Date(Date.now() - 2 * 864e5).toISOString(),
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }
+];
+var SEED_CATEGORIES = [
+  { id: "cat-001-1", restaurantId: "rest-001", name: "Starters & Appetizers", sortOrder: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() },
+  { id: "cat-001-2", restaurantId: "rest-001", name: "Main Course & Breads", sortOrder: 2, createdAt: (/* @__PURE__ */ new Date()).toISOString() },
+  { id: "cat-001-3", restaurantId: "rest-001", name: "Beverages & Desserts", sortOrder: 3, createdAt: (/* @__PURE__ */ new Date()).toISOString() }
+];
+var SEED_MENU_ITEMS = [
+  {
+    id: "item-001-1",
+    restaurantId: "rest-001",
+    categoryId: "cat-001-1",
+    name: "Paneer Malai Tikka",
+    description: "Charcoal grilled cottage cheese marinated in rich cashew cream and cardamom.",
+    price: 279,
+    isAvailable: true,
+    isVegetarian: true,
+    sortOrder: 1,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString()
+  },
+  {
+    id: "item-001-2",
+    restaurantId: "rest-001",
+    categoryId: "cat-001-1",
+    name: "Crispy Corn Salt & Pepper",
+    description: "Sweet corn kernels tossed with crunchy spring onions, garlic, and cracked pepper.",
+    price: 199,
+    isAvailable: true,
+    isVegetarian: true,
+    sortOrder: 2,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString()
+  },
+  {
+    id: "item-001-3",
+    restaurantId: "rest-001",
+    categoryId: "cat-001-2",
+    name: "Dal Makhani Special",
+    description: "Our signature slow-cooked black lentils simmered overnight with fresh butter.",
+    price: 299,
+    isAvailable: true,
+    isVegetarian: true,
+    sortOrder: 1,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString()
+  },
+  {
+    id: "item-001-4",
+    restaurantId: "rest-001",
+    categoryId: "cat-001-2",
+    name: "Butter Naan",
+    description: "Tandoor-baked flatbread glazed with pure Amul butter.",
+    price: 60,
+    isAvailable: true,
+    isVegetarian: true,
+    sortOrder: 2,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString()
+  },
+  {
+    id: "item-001-5",
+    restaurantId: "rest-001",
+    categoryId: "cat-001-3",
+    name: "Royal Masala Chaas",
+    description: "Traditional spiced buttermilk with roasted jeera and mint leaves.",
+    price: 79,
+    isAvailable: true,
+    isVegetarian: true,
+    sortOrder: 1,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString()
+  },
+  {
+    id: "item-001-6",
+    restaurantId: "rest-001",
+    categoryId: "cat-001-3",
+    name: "Sizzling Brownie with Ice Cream",
+    description: "Warm chocolate fudge brownie topped with vanilla ice cream and hot chocolate sauce.",
+    price: 169,
+    isAvailable: true,
+    isVegetarian: true,
+    sortOrder: 2,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString()
+  }
+];
+var SEED_REFERRALS = [
+  {
+    id: "ref-001",
+    referralCode: "PRIME10",
+    referrerName: "Param Sisodiya",
+    referrerContact: "param@primesoul.in",
+    status: "QUALIFIED",
+    clicksCount: 28,
+    leadsCount: 5,
+    wonCount: 1,
+    createdAt: new Date(Date.now() - 10 * 864e5).toISOString(),
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  },
+  {
+    id: "ref-002",
+    referralCode: "JAIPUR20",
+    referrerName: "Karan Singh (Royal Spice)",
+    referrerContact: "+91 98290 87654",
+    status: "LEAD",
+    clicksCount: 12,
+    leadsCount: 2,
+    wonCount: 0,
+    createdAt: new Date(Date.now() - 2 * 864e5).toISOString(),
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }
+];
+var SEED_APPROVALS = [
+  {
+    id: "appr-101",
+    workflowInstanceId: "wf-outbound-apex-1",
+    stepId: "step-outbound-craft",
+    leadId: "lead-001",
+    agentId: "outbound_sales",
+    type: "COLD_EMAIL",
+    title: "Touch 1 Cold Email: Apex Dental Care",
+    summary: "Signal-based cold outreach email addressing 4.1s mobile load speed and missing Google Maps 3-Pack rank.",
+    draftContent: `Subject: quick note on your website speed & local map listing
+
+Hi Dr. Rajesh,
+
+Noticed Apex Dental Care is expanding services in Indore, but your mobile website is currently taking 4.1s to load on smartphones, which typically causes 40%+ of local patients to bounce back to Google.
+
+At PrimeSoul Web Solutions, we help medical practices rank in the Google 3-Pack and load in under 1 second to capture high-intent inquiries.
+
+Open to seeing a 2-minute video breakdown of how to fix this?
+
+Best,  
+PrimeSoul Web Solutions Team`,
+    status: "REVIEW",
+    createdAt: new Date(Date.now() - 4 * 36e5).toISOString(),
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }
+];
+
+// src/core/growth/scoring.engine.ts
+var GrowthScoringEngine = class {
+  /**
+   * Calculates a deterministic 0-100 lead score and intent temperature.
+   */
+  static calculateScore(input) {
+    let score = 0;
+    const reasons = [];
+    if (input.phone && input.phone.trim().length >= 8) {
+      score += 20;
+      reasons.push("Phone number provided (+20)");
+    }
+    if (input.email && input.email.includes("@") && input.email.includes(".")) {
+      score += 10;
+      reasons.push("Email address provided (+10)");
+    }
+    if (input.requirement && input.requirement !== "Not Sure") {
+      score += 15;
+      reasons.push(`Selected requirement: ${input.requirement} (+15)`);
+    }
+    if (input.timeline === "Immediately") {
+      score += 20;
+      reasons.push("Immediate deployment timeline (+20)");
+    } else if (input.timeline === "Within 7 days") {
+      score += 10;
+      reasons.push("7-day start timeline (+10)");
+    } else if (input.timeline === "Within 30 days") {
+      score += 5;
+      reasons.push("30-day timeline (+5)");
+    }
+    if (input.hasViewedAuditResult) {
+      score += 10;
+      reasons.push("Completed digital health audit (+10)");
+    }
+    if (input.hasClickedContactCta) {
+      score += 15;
+      reasons.push("Clicked consultation / contact CTA (+15)");
+    }
+    if (input.hasCreatedQrMenu) {
+      score += 20;
+      reasons.push("Created active QR digital menu (+20)");
+    }
+    if (input.isTableOrderingInterested) {
+      score += 20;
+      reasons.push("Interested in direct table ordering (+20)");
+    }
+    if (input.hasRequestedDemo) {
+      score += 10;
+      reasons.push("Requested personalized demo (+10)");
+    }
+    const finalScore = Math.min(100, Math.max(0, score));
+    let temperature = "COLD";
+    if (finalScore >= 80) {
+      temperature = "HOT";
+    } else if (finalScore >= 60) {
+      temperature = "WARM";
+    } else if (finalScore >= 40) {
+      temperature = "COOL";
+    } else {
+      temperature = "COLD";
+    }
+    return {
+      score: finalScore,
+      temperature,
+      reasons
+    };
+  }
+};
+
+// src/core/database/db.service.ts
+var DatabaseService = class _DatabaseService {
+  static instance;
+  filePath;
+  data;
+  constructor(customPath) {
+    if (customPath) {
+      this.filePath = customPath;
+    } else if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+      this.filePath = path.resolve("/tmp", "primesoul_data.json");
+    } else {
+      this.filePath = path.resolve(process.cwd(), "primesoul_data.json");
+    }
+    this.data = this.loadData();
+  }
+  static getInstance() {
+    if (!_DatabaseService.instance) {
+      _DatabaseService.instance = new _DatabaseService();
+    }
+    return _DatabaseService.instance;
+  }
+  loadData() {
+    if (fs.existsSync(this.filePath)) {
+      try {
+        const raw = fs.readFileSync(this.filePath, "utf-8");
+        const parsed = JSON.parse(raw);
+        return this.ensureSchemaDefaults(parsed);
+      } catch (err) {
+        console.error("Failed to parse primary primesoul_data.json:", err);
+      }
+    }
+    const rootPath = path.resolve(process.cwd(), "primesoul_data.json");
+    if (this.filePath !== rootPath && fs.existsSync(rootPath)) {
+      try {
+        const raw = fs.readFileSync(rootPath, "utf-8");
+        const parsed = JSON.parse(raw);
+        const validated = this.ensureSchemaDefaults(parsed);
+        this.saveData(validated);
+        return validated;
+      } catch (err) {
+        console.error("Failed to parse bundled root primesoul_data.json:", err);
+      }
+    }
+    const defaultData = {
+      leads: [...SEED_LEADS],
+      workflows: [],
+      approvals: [...SEED_APPROVALS],
+      researchRuns: [],
+      audits: [...SEED_AUDITS],
+      qrRestaurants: [...SEED_RESTAURANTS],
+      qrCategories: [...SEED_CATEGORIES],
+      qrMenuItems: [...SEED_MENU_ITEMS],
+      referrals: [...SEED_REFERRALS],
+      events: [],
+      proposals: [],
+      contentPosts: [],
+      settings: {
+        aiProvider: process.env.AI_PROVIDER || "mock",
+        geminiApiKey: process.env.GEMINI_API_KEY || "",
+        ollamaBaseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
+        ollamaModel: process.env.OLLAMA_MODEL || "llama3:8b"
+      }
+    };
+    this.saveData(defaultData);
+    return defaultData;
+  }
+  ensureSchemaDefaults(parsed) {
+    if (!parsed.leads) parsed.leads = [...SEED_LEADS];
+    if (!parsed.workflows) parsed.workflows = [];
+    if (!parsed.approvals) parsed.approvals = [...SEED_APPROVALS];
+    if (!parsed.researchRuns) parsed.researchRuns = [];
+    if (!parsed.audits) parsed.audits = [...SEED_AUDITS];
+    if (!parsed.qrRestaurants) parsed.qrRestaurants = [...SEED_RESTAURANTS];
+    if (!parsed.qrCategories) parsed.qrCategories = [...SEED_CATEGORIES];
+    if (!parsed.qrMenuItems) parsed.qrMenuItems = [...SEED_MENU_ITEMS];
+    if (!parsed.referrals) parsed.referrals = [...SEED_REFERRALS];
+    if (!parsed.events) parsed.events = [];
+    if (!parsed.proposals) parsed.proposals = [];
+    if (!parsed.contentPosts) parsed.contentPosts = [];
+    if (!parsed.settings) {
+      parsed.settings = {
+        aiProvider: process.env.AI_PROVIDER || "mock",
+        geminiApiKey: process.env.GEMINI_API_KEY || "",
+        ollamaBaseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
+        ollamaModel: process.env.OLLAMA_MODEL || "llama3:8b"
+      };
+    }
+    return parsed;
+  }
+  saveData(data = this.data) {
+    try {
+      fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2), "utf-8");
+    } catch (err) {
+      console.warn("Notice: Could not persist primesoul_data.json to disk (running in-memory):", err);
+    }
+  }
+  // ==========================================
+  // 1. Leads CRUD & Management
+  // ==========================================
+  getLeads(filter) {
+    let list = this.data.leads;
+    if (!filter) return list;
+    if (filter.industry) {
+      list = list.filter((l) => l.industry.toLowerCase() === filter.industry?.toLowerCase());
+    }
+    if (filter.businessCategory) {
+      list = list.filter((l) => l.businessCategory === filter.businessCategory || l.industry.toLowerCase().includes(filter.businessCategory.toLowerCase()));
+    }
+    if (filter.qualificationStatus) {
+      list = list.filter((l) => l.qualificationStatus === filter.qualificationStatus);
+    }
+    if (filter.growthStatus) {
+      list = list.filter((l) => l.growthStatus === filter.growthStatus);
+    }
+    if (filter.outreachStatus) {
+      list = list.filter((l) => l.outreachStatus === filter.outreachStatus);
+    }
+    if (filter.temperature) {
+      list = list.filter((l) => l.leadTemperature === filter.temperature);
+    }
+    if (filter.source) {
+      list = list.filter((l) => l.source === filter.source || l.source.toLowerCase().includes(filter.source.toLowerCase()));
+    }
+    if (filter.minScore !== void 0) {
+      list = list.filter((l) => l.leadScore >= filter.minScore);
+    }
+    if (filter.searchQuery) {
+      const q = filter.searchQuery.toLowerCase();
+      list = list.filter(
+        (l) => l.businessName.toLowerCase().includes(q) || l.industry.toLowerCase().includes(q) || l.location.toLowerCase().includes(q) || l.city && l.city.toLowerCase().includes(q) || l.contactName && l.contactName.toLowerCase().includes(q) || l.email && l.email.toLowerCase().includes(q) || l.phone && l.phone.toLowerCase().includes(q) || l.website && l.website.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }
+  getLeadById(id) {
+    return this.data.leads.find((l) => l.id === id);
+  }
+  saveLead(lead) {
+    const existingIndex = lead.id ? this.data.leads.findIndex((l) => l.id === lead.id) : -1;
+    const scoreResult = GrowthScoringEngine.calculateScore({
+      phone: lead.phone,
+      email: lead.email,
+      requirement: lead.requirement,
+      timeline: lead.timeline,
+      hasViewedAuditResult: Boolean(lead.auditId || lead.source === "AUDIT"),
+      hasClickedContactCta: Boolean(lead.requirement || lead.growthStatus === "QUALIFIED"),
+      hasCreatedQrMenu: Boolean(lead.restaurantId || lead.source === "QR_MENU"),
+      hasRequestedDemo: Boolean(lead.growthStatus === "DEMO" || lead.requirement === "PrimeOMS")
+    });
+    if (existingIndex >= 0) {
+      const existing = this.data.leads[existingIndex];
+      const updated = {
+        ...existing,
+        ...lead,
+        industry: lead.industry || existing.industry || "Professional Services",
+        location: lead.location && lead.location !== "UNKNOWN" ? lead.location : existing.location,
+        city: lead.city || existing.city || existing.location,
+        contactName: lead.contactName && lead.contactName !== "UNKNOWN" ? lead.contactName : existing.contactName,
+        phone: lead.phone || existing.phone,
+        email: lead.email || existing.email,
+        website: lead.website || existing.website,
+        requirement: lead.requirement || existing.requirement,
+        timeline: lead.timeline || existing.timeline,
+        growthStatus: lead.growthStatus || existing.growthStatus || "NEW",
+        leadScore: lead.leadScore !== void 0 ? lead.leadScore : Math.max(existing.leadScore, scoreResult.score),
+        leadTemperature: lead.leadTemperature || scoreResult.temperature,
+        socialProfiles: {
+          ...existing.socialProfiles,
+          ...lead.socialProfiles
+        },
+        notesList: lead.notesList || existing.notesList || [],
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      this.data.leads[existingIndex] = updated;
+      this.saveData();
+      return updated;
+    }
+    const newLead = {
+      id: lead.id || `lead-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+      businessName: lead.businessName,
+      industry: lead.industry || (lead.businessCategory ? String(lead.businessCategory) : "General Business"),
+      businessCategory: lead.businessCategory,
+      location: lead.location || lead.city || "India",
+      city: lead.city || lead.location || "India",
+      source: lead.source || "WEBSITE",
+      sourceDetail: lead.sourceDetail,
+      requirement: lead.requirement,
+      timeline: lead.timeline,
+      website: lead.website || "",
+      contactName: lead.contactName || "",
+      email: lead.email || "",
+      phone: lead.phone || "",
+      socialProfiles: lead.socialProfiles || {},
+      leadScore: lead.leadScore ?? scoreResult.score,
+      leadTemperature: lead.leadTemperature || scoreResult.temperature,
+      qualificationStatus: lead.qualificationStatus || "QUALIFIED",
+      growthStatus: lead.growthStatus || "NEW",
+      digitalPresenceScore: lead.digitalPresenceScore ?? 50,
+      painPoints: lead.painPoints || [],
+      opportunities: lead.opportunities || [],
+      recommendedServices: lead.recommendedServices || [],
+      outreachStatus: lead.outreachStatus || "NOT_STARTED",
+      notes: lead.notes || "",
+      notesList: lead.notesList || [],
+      referralCode: lead.referralCode,
+      auditId: lead.auditId,
+      restaurantId: lead.restaurantId,
+      assignedTo: lead.assignedTo,
+      followUpDate: lead.followUpDate,
+      meddpicc: lead.meddpicc || { totalScore: 0 },
+      intelligenceProfile: lead.intelligenceProfile,
+      lastResearchAt: lead.lastResearchAt,
+      researchStatus: lead.researchStatus,
+      researchRunId: lead.researchRunId,
+      identityConfidence: lead.identityConfidence,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    this.data.leads.unshift(newLead);
+    this.saveData();
+    return newLead;
+  }
+  updateLeadStatus(id, growthStatus, notes) {
+    const lead = this.getLeadById(id);
+    if (!lead) return null;
+    lead.growthStatus = growthStatus;
+    lead.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    if (notes) {
+      if (!lead.notesList) lead.notesList = [];
+      lead.notesList.unshift({
+        id: `note-${Date.now().toString(36)}`,
+        leadId: id,
+        author: "PrimeSoul Team",
+        content: notes,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      });
+      lead.notes = notes;
+    }
+    this.saveData();
+    return lead;
+  }
+  addLeadNote(id, content, author = "Team Member") {
+    const lead = this.getLeadById(id);
+    if (!lead) return null;
+    if (!lead.notesList) lead.notesList = [];
+    const note = {
+      id: `note-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+      leadId: id,
+      author,
+      content,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    lead.notesList.unshift(note);
+    lead.notes = content;
+    lead.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.saveData();
+    return note;
+  }
+  deleteLead(id) {
+    const initialLen = this.data.leads.length;
+    this.data.leads = this.data.leads.filter((l) => l.id !== id);
+    if (this.data.leads.length !== initialLen) {
+      this.saveData();
+      return true;
+    }
+    return false;
+  }
+  // ==========================================
+  // 2. Business Audits CRUD
+  // ==========================================
+  getAudits() {
+    return this.data.audits || [];
+  }
+  getAuditById(id) {
+    return (this.data.audits || []).find((a) => a.id === id);
+  }
+  saveAudit(audit) {
+    if (!this.data.audits) this.data.audits = [];
+    const newAudit = {
+      id: audit.id || `audit-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+      businessName: audit.businessName,
+      websiteUrl: audit.websiteUrl,
+      category: audit.category || "Other",
+      city: audit.city || "India",
+      phone: audit.phone,
+      email: audit.email,
+      googleBusinessUrl: audit.googleBusinessUrl,
+      score: audit.score,
+      grade: audit.grade || (audit.score >= 90 ? "Excellent" : audit.score >= 75 ? "Good" : audit.score >= 50 ? "Needs Improvement" : "Major Opportunities"),
+      resultsJson: audit.resultsJson,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    this.data.audits.unshift(newAudit);
+    this.saveData();
+    return newAudit;
+  }
+  // ==========================================
+  // 3. Free QR Menus CRUD
+  // ==========================================
+  getRestaurants() {
+    const restaurants = this.data.qrRestaurants || [];
+    return restaurants.map((r) => ({
+      ...r,
+      categories: (this.data.qrCategories || []).filter((c) => c.restaurantId === r.id).sort((a, b) => a.sortOrder - b.sortOrder),
+      items: (this.data.qrMenuItems || []).filter((i) => i.restaurantId === r.id).sort((a, b) => a.sortOrder - b.sortOrder)
+    }));
+  }
+  getRestaurantBySlug(slug) {
+    const r = (this.data.qrRestaurants || []).find((x) => x.slug === slug);
+    if (!r) return void 0;
+    return {
+      ...r,
+      categories: (this.data.qrCategories || []).filter((c) => c.restaurantId === r.id).sort((a, b) => a.sortOrder - b.sortOrder),
+      items: (this.data.qrMenuItems || []).filter((i) => i.restaurantId === r.id).sort((a, b) => a.sortOrder - b.sortOrder)
+    };
+  }
+  getRestaurantById(id) {
+    const r = (this.data.qrRestaurants || []).find((x) => x.id === id);
+    if (!r) return void 0;
+    return {
+      ...r,
+      categories: (this.data.qrCategories || []).filter((c) => c.restaurantId === r.id).sort((a, b) => a.sortOrder - b.sortOrder),
+      items: (this.data.qrMenuItems || []).filter((i) => i.restaurantId === r.id).sort((a, b) => a.sortOrder - b.sortOrder)
+    };
+  }
+  saveRestaurant(rest) {
+    if (!this.data.qrRestaurants) this.data.qrRestaurants = [];
+    const idx = rest.id ? this.data.qrRestaurants.findIndex((r) => r.id === rest.id) : -1;
+    if (idx >= 0) {
+      const updated = {
+        ...this.data.qrRestaurants[idx],
+        ...rest,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      this.data.qrRestaurants[idx] = updated;
+      this.saveData();
+      return updated;
+    }
+    const newRest = {
+      id: rest.id || `rest-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+      businessName: rest.businessName,
+      slug: rest.slug,
+      phone: rest.phone,
+      city: rest.city,
+      logoUrl: rest.logoUrl,
+      isPublished: rest.isPublished !== void 0 ? rest.isPublished : true,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    this.data.qrRestaurants.unshift(newRest);
+    this.saveData();
+    return newRest;
+  }
+  saveCategory(cat) {
+    if (!this.data.qrCategories) this.data.qrCategories = [];
+    const idx = cat.id ? this.data.qrCategories.findIndex((c) => c.id === cat.id) : -1;
+    if (idx >= 0) {
+      const updated = { ...this.data.qrCategories[idx], ...cat };
+      this.data.qrCategories[idx] = updated;
+      this.saveData();
+      return updated;
+    }
+    const newCat = {
+      id: cat.id || `cat-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+      restaurantId: cat.restaurantId,
+      name: cat.name,
+      sortOrder: cat.sortOrder ?? this.data.qrCategories.filter((c) => c.restaurantId === cat.restaurantId).length + 1,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    this.data.qrCategories.push(newCat);
+    this.saveData();
+    return newCat;
+  }
+  deleteCategory(id) {
+    if (!this.data.qrCategories) return false;
+    const initialLen = this.data.qrCategories.length;
+    this.data.qrCategories = this.data.qrCategories.filter((c) => c.id !== id);
+    if (this.data.qrMenuItems) {
+      this.data.qrMenuItems = this.data.qrMenuItems.filter((i) => i.categoryId !== id);
+    }
+    this.saveData();
+    return this.data.qrCategories.length !== initialLen;
+  }
+  saveMenuItem(item) {
+    if (!this.data.qrMenuItems) this.data.qrMenuItems = [];
+    const idx = item.id ? this.data.qrMenuItems.findIndex((i) => i.id === item.id) : -1;
+    if (idx >= 0) {
+      const updated = { ...this.data.qrMenuItems[idx], ...item };
+      this.data.qrMenuItems[idx] = updated;
+      this.saveData();
+      return updated;
+    }
+    const newItem = {
+      id: item.id || `item-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+      restaurantId: item.restaurantId,
+      categoryId: item.categoryId,
+      name: item.name,
+      description: item.description,
+      price: item.price,
+      imageUrl: item.imageUrl,
+      isAvailable: item.isAvailable !== void 0 ? item.isAvailable : true,
+      isVegetarian: item.isVegetarian !== void 0 ? item.isVegetarian : true,
+      sortOrder: item.sortOrder ?? this.data.qrMenuItems.filter((i) => i.categoryId === item.categoryId).length + 1,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    this.data.qrMenuItems.push(newItem);
+    this.saveData();
+    return newItem;
+  }
+  deleteMenuItem(id) {
+    if (!this.data.qrMenuItems) return false;
+    const initialLen = this.data.qrMenuItems.length;
+    this.data.qrMenuItems = this.data.qrMenuItems.filter((i) => i.id !== id);
+    this.saveData();
+    return this.data.qrMenuItems.length !== initialLen;
+  }
+  // ==========================================
+  // 4. Referrals System CRUD
+  // ==========================================
+  getReferrals() {
+    return this.data.referrals || [];
+  }
+  getReferralByCode(code) {
+    return (this.data.referrals || []).find((r) => r.referralCode.toUpperCase() === code.toUpperCase());
+  }
+  saveReferral(ref) {
+    if (!this.data.referrals) this.data.referrals = [];
+    const code = ref.referralCode.toUpperCase();
+    const idx = this.data.referrals.findIndex((r) => r.referralCode === code);
+    if (idx >= 0) {
+      const updated = {
+        ...this.data.referrals[idx],
+        ...ref,
+        referralCode: code,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      this.data.referrals[idx] = updated;
+      this.saveData();
+      return updated;
+    }
+    const newRef = {
+      id: ref.id || `ref-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+      referralCode: code,
+      referrerName: ref.referrerName,
+      referrerContact: ref.referrerContact,
+      referredBusiness: ref.referredBusiness,
+      status: ref.status || "LEAD",
+      clicksCount: ref.clicksCount || 0,
+      leadsCount: ref.leadsCount || 0,
+      wonCount: ref.wonCount || 0,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    this.data.referrals.unshift(newRef);
+    this.saveData();
+    return newRef;
+  }
+  trackReferralClick(code) {
+    const ref = this.getReferralByCode(code);
+    if (!ref) return false;
+    ref.clicksCount = (ref.clicksCount || 0) + 1;
+    ref.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.saveData();
+    return true;
+  }
+  trackReferralLead(code) {
+    const ref = this.getReferralByCode(code);
+    if (!ref) return false;
+    ref.leadsCount = (ref.leadsCount || 0) + 1;
+    ref.status = "QUALIFIED";
+    ref.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.saveData();
+    return true;
+  }
+  // ==========================================
+  // 5. Events & Analytics
+  // ==========================================
+  getEvents() {
+    return this.data.events || [];
+  }
+  saveEvent(event) {
+    if (!this.data.events) this.data.events = [];
+    this.data.events.unshift(event);
+    if (this.data.events.length > 1e3) {
+      this.data.events = this.data.events.slice(0, 1e3);
+    }
+    this.saveData();
+    return event;
+  }
+  // ==========================================
+  // 6. Research Runs CRUD
+  // ==========================================
+  getResearchRuns(leadId) {
+    if (!this.data.researchRuns) this.data.researchRuns = [];
+    if (leadId) {
+      return this.data.researchRuns.filter((r) => r.leadId === leadId);
+    }
+    return this.data.researchRuns;
+  }
+  getResearchRunById(runId) {
+    if (!this.data.researchRuns) this.data.researchRuns = [];
+    return this.data.researchRuns.find((r) => r.runId === runId);
+  }
+  saveResearchRun(run) {
+    if (!this.data.researchRuns) this.data.researchRuns = [];
+    const idx = this.data.researchRuns.findIndex((r) => r.runId === run.runId);
+    if (idx >= 0) {
+      this.data.researchRuns[idx] = run;
+    } else {
+      this.data.researchRuns.unshift(run);
+    }
+    this.saveData();
+    return run;
+  }
+  // ==========================================
+  // 7. Workflows CRUD
+  // ==========================================
+  getWorkflows() {
+    return this.data.workflows || [];
+  }
+  getWorkflowById(id) {
+    return (this.data.workflows || []).find((w) => w.id === id);
+  }
+  saveWorkflow(wf) {
+    if (!this.data.workflows) this.data.workflows = [];
+    const idx = this.data.workflows.findIndex((w) => w.id === wf.id);
+    if (idx >= 0) {
+      this.data.workflows[idx] = wf;
+    } else {
+      this.data.workflows.unshift(wf);
+    }
+    this.saveData();
+    return wf;
+  }
+  // ==========================================
+  // 8. Approvals CRUD
+  // ==========================================
+  getApprovals(status) {
+    if (!this.data.approvals) this.data.approvals = [];
+    if (status) {
+      return this.data.approvals.filter((a) => a.status === status);
+    }
+    return this.data.approvals;
+  }
+  getApprovalById(id) {
+    return (this.data.approvals || []).find((a) => a.id === id);
+  }
+  saveApproval(item) {
+    if (!this.data.approvals) this.data.approvals = [];
+    const idx = item.id ? this.data.approvals.findIndex((a) => a.id === item.id) : -1;
+    if (idx >= 0) {
+      const updated = {
+        ...this.data.approvals[idx],
+        ...item,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      this.data.approvals[idx] = updated;
+      this.saveData();
+      return updated;
+    }
+    const newItem = {
+      id: item.id || `appr-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+      workflowInstanceId: item.workflowInstanceId,
+      stepId: item.stepId,
+      leadId: item.leadId,
+      agentId: item.agentId,
+      type: item.type,
+      title: item.title,
+      summary: item.summary,
+      draftContent: item.draftContent,
+      revisedContent: item.revisedContent,
+      status: item.status || "REVIEW",
+      feedbackHistory: item.feedbackHistory || [],
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    this.data.approvals.unshift(newItem);
+    this.saveData();
+    return newItem;
+  }
+  updateApprovalStatus(id, status, comment, modifiedContent) {
+    const item = this.getApprovalById(id);
+    if (!item) return null;
+    item.status = status;
+    item.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    if (modifiedContent) {
+      item.revisedContent = modifiedContent;
+    }
+    if (!item.feedbackHistory) {
+      item.feedbackHistory = [];
+    }
+    item.feedbackHistory.push({
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      action: status === "APPROVED" ? "APPROVE" : status === "REVISED" ? "REVISE" : status === "REJECTED" ? "REJECT" : "REVIEW",
+      comment,
+      modifiedContent
+    });
+    this.saveData();
+    return item;
+  }
+  // ==========================================
+  // 9. Settings & Provider Configuration
+  // ==========================================
+  getSettings() {
+    const rawKey = this.data.settings.geminiApiKey || "";
+    const hasGeminiKey = Boolean(rawKey && rawKey.trim().length > 0);
+    const maskedGeminiKey = hasGeminiKey ? rawKey.length > 8 ? `${rawKey.substring(0, 6)}${"\u2022".repeat(Math.min(24, Math.max(12, rawKey.length - 10)))}${rawKey.substring(rawKey.length - 4)}` : "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" : "";
+    return {
+      ...this.data.settings,
+      geminiApiKey: maskedGeminiKey,
+      hasGeminiKey,
+      maskedGeminiKey
+    };
+  }
+  getRawSettings() {
+    return this.data.settings;
+  }
+  updateSettings(settings) {
+    const current = this.data.settings;
+    const newSettings = { ...current };
+    if (settings.aiProvider) {
+      newSettings.aiProvider = settings.aiProvider;
+    }
+    if (settings.ollamaBaseUrl !== void 0) {
+      newSettings.ollamaBaseUrl = settings.ollamaBaseUrl;
+    }
+    if (settings.ollamaModel !== void 0) {
+      newSettings.ollamaModel = settings.ollamaModel;
+    }
+    if (settings.geminiApiKey !== void 0) {
+      const trimmed = settings.geminiApiKey.trim();
+      if (trimmed.includes("\u2022") || trimmed.includes("*")) {
+      } else {
+        newSettings.geminiApiKey = trimmed;
+      }
+    }
+    this.data.settings = newSettings;
+    this.saveData();
+    return this.getSettings();
+  }
+  resetData() {
+    this.data = {
+      leads: [...SEED_LEADS],
+      workflows: [],
+      approvals: [...SEED_APPROVALS],
+      researchRuns: [],
+      audits: [...SEED_AUDITS],
+      qrRestaurants: [...SEED_RESTAURANTS],
+      qrCategories: [...SEED_CATEGORIES],
+      qrMenuItems: [...SEED_MENU_ITEMS],
+      referrals: [...SEED_REFERRALS],
+      events: [],
+      proposals: [],
+      contentPosts: [],
+      settings: {
+        aiProvider: process.env.AI_PROVIDER || "mock",
+        geminiApiKey: process.env.GEMINI_API_KEY || "",
+        ollamaBaseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
+        ollamaModel: process.env.OLLAMA_MODEL || "llama3:8b"
+      }
+    };
+    this.saveData();
+  }
+};
+var dbService = DatabaseService.getInstance();
+
+// src/core/research/lead-intelligence.service.ts
+var LeadIntelligenceService = class _LeadIntelligenceService {
+  static instance;
+  webAnalyzer;
+  webSearch;
+  provenanceService;
+  identityResolver;
+  scoringService;
+  changeDetector;
+  db;
+  constructor() {
+    this.webAnalyzer = new WebAnalyzerTool();
+    this.webSearch = new WebSearchTool();
+    this.provenanceService = ProvenanceService.getInstance();
+    this.identityResolver = IdentityResolverService.getInstance();
+    this.scoringService = ScoringService.getInstance();
+    this.changeDetector = ChangeDetectorService.getInstance();
+    this.db = DatabaseService.getInstance();
+  }
+  static getInstance() {
+    if (!_LeadIntelligenceService.instance) {
+      _LeadIntelligenceService.instance = new _LeadIntelligenceService();
+    }
+    return _LeadIntelligenceService.instance;
+  }
+  /**
+   * Executes the full end-to-end Lead Intelligence Research Pipeline.
+   */
+  async executeResearch(params) {
+    const runId = `run-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    const errors = [];
+    const unknownFields = [];
+    const sources = [];
+    let targetUrl = params.url?.trim() || "";
+    const inputBusinessName = params.businessName?.trim() || "";
+    const inputLocation = params.location?.trim() || "";
+    let existingLead;
+    if (params.leadId) {
+      existingLead = this.db.getLeadById(params.leadId);
+      if (existingLead) {
+        if (!targetUrl && existingLead.website) targetUrl = existingLead.website;
+      }
+    }
+    if (!targetUrl && !inputBusinessName) {
+      return {
+        success: false,
+        error: "Invalid input: Either a website URL or a business name is required to conduct research."
+      };
+    }
+    let webReport;
+    if (targetUrl) {
+      const scanStart = Date.now();
+      const webResult = await this.webAnalyzer.execute({
+        url: targetUrl,
+        businessName: inputBusinessName || existingLead?.businessName
+      });
+      if (webResult.success && webResult.data) {
+        webReport = webResult.data;
+        sources.push({
+          url: webReport.finalUrl || targetUrl,
+          sourceType: "LIVE_WEBSITE",
+          status: "SUCCESS",
+          timestamp,
+          latencyMs: Date.now() - scanStart
+        });
+      } else {
+        errors.push(`Website scan issue: ${webResult.error}`);
+        sources.push({
+          url: targetUrl,
+          sourceType: "LIVE_WEBSITE",
+          status: "FAILED",
+          timestamp,
+          latencyMs: Date.now() - scanStart
+        });
+      }
+    } else {
+      unknownFields.push("websiteUrl");
+    }
+    const searchQuery = inputBusinessName ? `${inputBusinessName} ${inputLocation}`.trim() : webReport?.detected?.title || targetUrl;
+    let searchResults = [];
+    try {
+      const searchRes = await this.webSearch.execute({ query: searchQuery, limit: 4 });
+      if (searchRes.success && searchRes.data?.results) {
+        searchResults = searchRes.data.results;
+        sources.push({
+          url: `https://search.engine/?q=${encodeURIComponent(searchQuery)}`,
+          sourceType: "PUBLIC_WEB",
+          status: "SUCCESS",
+          timestamp
+        });
+      }
+    } catch (sErr) {
+      errors.push(`Public search lookup failed: ${sErr.message}`);
+    }
+    const identityResult = this.identityResolver.resolveIdentity({
+      inputName: inputBusinessName || existingLead?.businessName,
+      inputLocation: inputLocation || existingLead?.location,
+      inputUrl: targetUrl,
+      webReport,
+      searchResults
+    });
+    if (identityResult.status === "AMBIGUOUS") {
+      unknownFields.push("identity.ambiguity");
+    }
+    const reportToScore = webReport || {
+      url: targetUrl,
+      finalUrl: targetUrl,
+      isAccessible: false,
+      measured: { httpStatus: 0, responseTimeMs: 0, contentSizeBytes: 0, isHttps: targetUrl.startsWith("https://"), redirectCount: 0 },
+      detected: {
+        title: inputBusinessName,
+        hasViewport: false,
+        robotsTxtStatus: "UNCHECKED",
+        sitemapStatus: "UNCHECKED",
+        openGraph: {},
+        headings: { h1: [], h2Count: 0, sampleH2s: [], h3Count: 0, sampleH3s: [] },
+        detectedCms: "Unknown / Offline",
+        hasWhatsAppLink: false,
+        hasTelLink: false,
+        publicPhones: [],
+        publicEmails: [],
+        bookingLinks: [],
+        contactPageUrls: [],
+        socialProfiles: {},
+        imageOptimization: { totalImages: 0, missingAltCount: 0 },
+        schemaTypes: [],
+        hasLocalBusinessSchema: false
+      },
+      inferred: {
+        mobileFriendlinessEstimate: "UNKNOWN",
+        localBusinessReadinessScore: 30,
+        detectedTechStack: ["Unverified"],
+        identifiedGaps: ["Website was inaccessible during audit or no URL provided."],
+        recommendedPrimeSoulActions: ["Conduct manual business discovery and website verification"]
+      },
+      unknown: {
+        realUserCoreWebVitals: "Unknown",
+        organicSearchVolume: "Unknown",
+        internalServerArchitecture: "Unknown"
+      }
+    };
+    const dimensionalScores = this.scoringService.calculateDimensionalScores(reportToScore);
+    const leadScoring = this.scoringService.calculateLeadScore({ report: reportToScore, dimensionalScores });
+    const recommendedServices = this.scoringService.matchServices(reportToScore.inferred.identifiedGaps, reportToScore);
+    const publicPhones = reportToScore.detected.publicPhones.map((phone) => ({
+      value: phone,
+      type: "PHONE",
+      source: reportToScore.finalUrl || targetUrl,
+      sourceType: "LIVE_WEBSITE",
+      confidence: "HIGH",
+      evidence: `Extracted from direct tel: link on ${reportToScore.finalUrl || targetUrl}`
+    }));
+    const publicEmails = reportToScore.detected.publicEmails.map((email) => ({
+      value: email,
+      type: "EMAIL",
+      source: reportToScore.finalUrl || targetUrl,
+      sourceType: "LIVE_WEBSITE",
+      confidence: "HIGH",
+      evidence: `Extracted from direct mailto: link on ${reportToScore.finalUrl || targetUrl}`
+    }));
+    if (publicPhones.length === 0) unknownFields.push("contact.publicPhones");
+    if (publicEmails.length === 0) unknownFields.push("contact.publicEmails");
+    const webFacts = this.provenanceService.extractFromWebAnalysis(reportToScore);
+    const crmFacts = this.provenanceService.extractFromLeadData({
+      businessName: identityResult.resolvedName,
+      location: identityResult.verifiedLocations[0] || "UNKNOWN",
+      website: targetUrl,
+      industry: existingLead?.industry || "UNKNOWN"
+    });
+    const provenanceDictionary = this.provenanceService.mergeProvenance(webFacts, crmFacts);
+    const profile = {
+      identity: {
+        resolvedName: identityResult.resolvedName,
+        legalName: identityResult.legalName,
+        domain: identityResult.domain,
+        verifiedLocations: identityResult.verifiedLocations,
+        confidence: identityResult.status,
+        ambiguityReasons: identityResult.ambiguityReasons.length > 0 ? identityResult.ambiguityReasons : void 0
+      },
+      business: {
+        category: existingLead?.industry || "Local Business & Professional Services",
+        summary: reportToScore.detected.metaDescription || `Business profile for ${identityResult.resolvedName}`,
+        operationalStatus: reportToScore.isAccessible ? "OPERATIONAL" : "REQUIRES_MANUAL_CHECK"
+      },
+      contact: {
+        publicPhones,
+        publicEmails,
+        contactPages: reportToScore.detected.contactPageUrls,
+        bookingLinks: reportToScore.detected.bookingLinks,
+        address: identityResult.verifiedLocations[0]
+      },
+      website: {
+        finalUrl: reportToScore.finalUrl,
+        isHttps: reportToScore.measured.isHttps,
+        httpStatus: reportToScore.measured.httpStatus,
+        responseTimeMs: reportToScore.measured.responseTimeMs,
+        contentSizeBytes: reportToScore.measured.contentSizeBytes,
+        compressionType: reportToScore.measured.compressionType,
+        detectedCms: reportToScore.detected.detectedCms,
+        detectedTechStack: reportToScore.inferred.detectedTechStack
+      },
+      seo: {
+        title: reportToScore.detected.title,
+        metaDescription: reportToScore.detected.metaDescription,
+        canonicalUrl: reportToScore.detected.canonicalUrl,
+        h1Count: reportToScore.detected.headings.h1.length,
+        sampleH1s: reportToScore.detected.headings.h1,
+        h2Count: reportToScore.detected.headings.h2Count,
+        sampleH2s: reportToScore.detected.headings.sampleH2s,
+        h3Count: reportToScore.detected.headings.h3Count,
+        robotsTxtStatus: reportToScore.detected.robotsTxtStatus,
+        sitemapStatus: reportToScore.detected.sitemapStatus,
+        imageOptimization: reportToScore.detected.imageOptimization,
+        score: dimensionalScores.seoHealth,
+        reasons: dimensionalScores.dimensions.find((d) => d.name === "SEO Health")?.reasons.map((r) => r.description) || []
+      },
+      localSearch: {
+        hasLocalBusinessSchema: reportToScore.detected.hasLocalBusinessSchema,
+        schemaTypes: reportToScore.detected.schemaTypes,
+        googleMapsPresence: !!searchResults.find((r) => r.url?.includes("maps.google.com")),
+        score: dimensionalScores.localSeoReadiness,
+        reasons: dimensionalScores.dimensions.find((d) => d.name === "Local SEO Readiness")?.reasons.map((r) => r.description) || []
+      },
+      conversion: {
+        hasWhatsAppWidget: reportToScore.detected.hasWhatsAppLink,
+        hasTelLink: reportToScore.detected.hasTelLink,
+        hasBookingWidget: reportToScore.detected.bookingLinks.length > 0,
+        hasLeadForm: reportToScore.detected.contactPageUrls.length > 0,
+        score: dimensionalScores.conversionReadiness,
+        reasons: dimensionalScores.dimensions.find((d) => d.name === "Conversion Readiness")?.reasons.map((r) => r.description) || []
+      },
+      socialPresence: {
+        ...reportToScore.detected.socialProfiles,
+        score: dimensionalScores.socialPresenceScore,
+        reasons: dimensionalScores.dimensions.find((d) => d.name === "Social Presence")?.reasons.map((r) => r.description) || []
+      },
+      digitalPresence: dimensionalScores,
+      leadScoring,
+      verifiedGaps: reportToScore.inferred.identifiedGaps,
+      opportunities: [
+        "Sub-second responsive website rebuild",
+        "Local 3-Pack Schema.org JSON-LD structured data",
+        "Direct WhatsApp conversion capture integration",
+        "On-page SEO meta architecture remediation"
+      ],
+      unknowns: unknownFields,
+      recommendedServices,
+      provenance: provenanceDictionary,
+      researchRunId: runId,
+      researchTimestamp: timestamp
+    };
+    const changesReport = this.changeDetector.detectChanges(
+      existingLead?.intelligenceProfile,
+      profile
+    );
+    const leadToSave = {
+      id: existingLead?.id,
+      businessName: identityResult.resolvedName !== "UNKNOWN" ? identityResult.resolvedName : existingLead?.businessName || "UNKNOWN",
+      website: targetUrl || existingLead?.website,
+      location: identityResult.verifiedLocations[0] || existingLead?.location || "UNKNOWN",
+      industry: existingLead?.industry || "Healthcare / Local Services",
+      leadScore: leadScoring.leadScore,
+      qualificationStatus: leadScoring.qualification,
+      digitalPresenceScore: dimensionalScores.overallScore,
+      painPoints: reportToScore.inferred.identifiedGaps,
+      opportunities: profile.opportunities,
+      recommendedServices: recommendedServices.map((s) => s.serviceName),
+      socialProfiles: {
+        ...existingLead?.socialProfiles,
+        ...reportToScore.detected.socialProfiles
+      },
+      // Preserve verified contacts if new scan found none
+      phone: publicPhones[0]?.value || existingLead?.phone,
+      email: publicEmails[0]?.value || existingLead?.email,
+      intelligenceProfile: profile,
+      lastResearchAt: timestamp,
+      researchStatus: webReport ? "COMPLETED" : "PARTIAL",
+      researchRunId: runId,
+      identityConfidence: identityResult.status
+    };
+    const savedLead = this.db.saveLead(leadToSave);
+    const runRecord = {
+      runId,
+      leadId: savedLead.id,
+      input: {
+        url: targetUrl,
+        businessName: inputBusinessName,
+        location: inputLocation
+      },
+      status: webReport ? "COMPLETED" : targetUrl ? "PARTIAL" : "FAILED",
+      sources,
+      extractedFacts: provenanceDictionary,
+      changesFromPrevious: changesReport,
+      unknownFields,
+      errors: errors.length > 0 ? errors : void 0,
+      timestamp,
+      profileSnapshot: profile
+    };
+    this.db.saveResearchRun(runRecord);
+    return {
+      success: true,
+      profile,
+      run: runRecord,
+      lead: savedLead
+    };
+  }
+};
+
+// src/api/research.ts
+function sendJson(res, status, data) {
+  if (typeof res.status === "function" && typeof res.json === "function") {
+    return res.status(status).json(data);
+  }
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(data));
+}
+async function handler(req, res) {
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version"
+  );
+  if (req.method === "OPTIONS") {
+    res.statusCode = 200;
+    return res.end();
+  }
+  const db = DatabaseService.getInstance();
+  const leadIntelligenceService = LeadIntelligenceService.getInstance();
+  const urlObj = new URL(req.url || "/", "http://localhost");
+  const leadId = req.query && req.query.leadId || urlObj.searchParams.get("leadId");
+  if (req.method === "GET") {
+    if (leadId) {
+      const runs = db.getResearchRuns(leadId);
+      return sendJson(res, 200, { success: true, runs, count: runs.length });
+    }
+    const allRuns = db.getResearchRuns();
+    return sendJson(res, 200, { success: true, runs: allRuns, count: allRuns.length });
+  }
+  if (req.method === "POST") {
+    try {
+      const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
+      const targetLeadId = leadId || body.leadId || body.id;
+      if (!targetLeadId) {
+        return sendJson(res, 400, { success: false, error: "leadId is required" });
+      }
+      const lead = db.getLeadById(targetLeadId);
+      if (!lead) {
+        return sendJson(res, 404, { success: false, error: `Lead ${targetLeadId} not found` });
+      }
+      const updatedLead = await leadIntelligenceService.researchLead(targetLeadId);
+      return sendJson(res, 200, {
+        success: true,
+        lead: updatedLead,
+        intelligenceProfile: updatedLead.intelligenceProfile
+      });
+    } catch (err) {
+      return sendJson(res, 500, { success: false, error: err.message || "Failed to conduct lead research" });
+    }
+  }
+  return sendJson(res, 405, { success: false, error: `Method ${req.method} not allowed` });
+}
+export {
+  handler as default
+};

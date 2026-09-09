@@ -9,7 +9,8 @@
     "dev:client": "vite",
     "dev": "tsx src/server/index.ts",
     "build:client": "vite build",
-    "build": "vite build",
+    "build:server": "node build-api.js",
+    "build": "vite build && node build-api.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -1,6 +1,6 @@
-import { DatabaseService } from '../src/core/database/db.service';
-import { GrowthScoringEngine } from '../src/core/growth/scoring.engine';
-import { EventService } from '../src/core/growth/event.service';
+import { DatabaseService } from '../core/database/db.service';
+import { GrowthScoringEngine } from '../core/growth/scoring.engine';
+import { EventService } from '../core/growth/event.service';
 
 function sendJson(res: any, status: number, data: any) {
   if (typeof res.status === 'function' && typeof res.json === 'function') {
