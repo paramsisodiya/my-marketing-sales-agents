@@ -34,13 +34,13 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
 const DEFAULT_AGENTS: IAgentMetadata[] = [
   { id: 'primesoul_manager', name: 'PrimeSoul Manager', division: 'orchestration', description: 'Central AI Operations & Strategy Manager', color: '#6366F1', icon: 'Bot', responsibilities: ['Orchestration'], vibe: 'Autonomous', requiredKnowledge: [] },
   { id: 'lead_researcher', name: 'Lead Researcher', division: 'research', description: 'Website auditor & tech stack analyzer', color: '#10B981', icon: 'Search', responsibilities: ['Research'], vibe: 'Analytical', requiredKnowledge: [] },
-  { id: 'growth_strategist', name: 'Growth Strategist', division: 'strategy', description: 'Funnel & offer architect', color: '#F59E0B', icon: 'TrendingUp', responsibilities: ['Strategy'], vibe: 'Visionary', requiredKnowledge: [] },
-  { id: 'content_social', name: 'Content & Social Agent', division: 'content', description: 'Multi-platform social content creator', color: '#EC4899', icon: 'Share2', responsibilities: ['Content'], vibe: 'Engaging', requiredKnowledge: [] },
+  { id: 'growth_strategist', name: 'Growth Strategist', division: 'marketing', description: 'Funnel & offer architect', color: '#F59E0B', icon: 'TrendingUp', responsibilities: ['Strategy'], vibe: 'Visionary', requiredKnowledge: [] },
+  { id: 'content_social', name: 'Content & Social Agent', division: 'marketing', description: 'Multi-platform social content creator', color: '#EC4899', icon: 'Share2', responsibilities: ['Content'], vibe: 'Engaging', requiredKnowledge: [] },
   { id: 'seo_local', name: 'SEO & Local Search Specialist', division: 'seo', description: 'Google Local 3-Pack & technical SEO', color: '#06B6D4', icon: 'MapPin', responsibilities: ['SEO'], vibe: 'Precise', requiredKnowledge: [] },
   { id: 'outbound_sales', name: 'Outbound Sales Agent', division: 'sales', description: 'Cold email & WhatsApp outreach', color: '#8B5CF6', icon: 'Send', responsibilities: ['Outbound'], vibe: 'Persuasive', requiredKnowledge: [] },
   { id: 'discovery', name: 'Discovery Call Coach', division: 'sales', description: 'SPIN & Gap selling call blueprints', color: '#3B82F6', icon: 'PhoneCall', responsibilities: ['Discovery'], vibe: 'Inquisitive', requiredKnowledge: [] },
-  { id: 'deal_strategist', name: 'Deal Strategist', division: 'deal', description: 'MEDDPICC evaluation & win plans', color: '#14B8A6', icon: 'Target', responsibilities: ['Deal Strategy'], vibe: 'Tactical', requiredKnowledge: [] },
-  { id: 'proposal', name: 'Proposal & Closer Agent', division: 'proposal', description: '3-Act persuasion proposal architect', color: '#F97316', icon: 'FileText', responsibilities: ['Proposals'], vibe: 'Authoritative', requiredKnowledge: [] },
+  { id: 'deal_strategist', name: 'Deal Strategist', division: 'sales', description: 'MEDDPICC evaluation & win plans', color: '#14B8A6', icon: 'Target', responsibilities: ['Deal Strategy'], vibe: 'Tactical', requiredKnowledge: [] },
+  { id: 'proposal', name: 'Proposal & Closer Agent', division: 'sales', description: '3-Act persuasion proposal architect', color: '#F97316', icon: 'FileText', responsibilities: ['Proposals'], vibe: 'Authoritative', requiredKnowledge: [] },
 ];
 
 export const apiService = {
@@ -194,14 +194,14 @@ export const apiService = {
       const instance: IWorkflowInstance = {
         id: `wf-${Date.now().toString(36)}`,
         workflowId,
-        name: def?.name || 'Workflow',
+        workflowName: def?.name || 'Workflow',
         status: 'RUNNING',
         currentStepIndex: 0,
         leadId,
         context: context || {},
-        stepResults: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        steps: [],
+        startedAt: new Date().toISOString(),
+        logs: [],
       };
       return instance;
     }
@@ -219,13 +219,13 @@ export const apiService = {
       return {
         id: instanceId,
         workflowId: 'wf-resumed',
-        name: 'Resumed Workflow',
+        workflowName: 'Resumed Workflow',
         status: approved ? 'COMPLETED' : 'FAILED',
         currentStepIndex: 1,
         context: {},
-        stepResults: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        steps: [],
+        startedAt: new Date().toISOString(),
+        logs: [],
       };
     }
   },
@@ -328,7 +328,7 @@ export const apiService = {
         workflowInstanceId: 'wf-local',
         stepId: 'step-local',
         agentId: 'outbound_sales',
-        type: 'OUTREACH_EMAIL',
+        type: 'COLD_EMAIL',
         title: 'Outbound Approval',
         summary: 'Reviewed locally',
         draftContent: modifiedContent || 'Draft content',

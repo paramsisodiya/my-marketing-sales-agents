@@ -2,6 +2,7 @@ import { IWebAnalysisReport } from '../tools/web-analyzer.tool';
 import {
   IDigitalPresenceDimension,
   ILeadScoreBreakdown,
+  ILeadScoreFactor,
   IRecommendedServiceMatch,
 } from '../types/lead-intelligence.types';
 

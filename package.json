@@ -8,8 +8,6 @@
     "dev:server": "tsx watch src/server/index.ts",
     "dev:client": "vite",
     "dev": "tsx src/server/index.ts",
-    "build:client": "vite build",
-    "build:server": "node build-api.js",
     "build": "vite build",
     "test": "vitest run",
     "test:watch": "vitest"

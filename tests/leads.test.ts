@@ -30,7 +30,7 @@ describe('PrimeSoul AI Leads & Database Suite', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.data.leadScore).toBeGreaterThanOrEqual(50);
+    expect((result.data as any)?.leadScore).toBeGreaterThanOrEqual(50);
   });
 
   it('should update human approval status', () => {

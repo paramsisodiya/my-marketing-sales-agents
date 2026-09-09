@@ -82,7 +82,7 @@ router.get('/workflows/instances', (_req: Request, res: Response) => {
 });
 
 router.get('/workflows/instances/:id', (req: Request, res: Response) => {
-  const instance = db.getWorkflowById(req.params.id);
+  const instance = db.getWorkflowById(req.params.id as string);
   if (!instance) {
     return res.status(404).json({ success: false, error: 'Workflow instance not found' });
   }
@@ -119,7 +119,7 @@ router.post('/workflows/start', async (req: Request, res: Response) => {
 router.post('/workflows/instances/:id/resume', async (req: Request, res: Response) => {
   try {
     const { approvalId, approved, feedback } = req.body;
-    const updated = await workflowEngine.resumeWorkflowAfterApproval(req.params.id, approvalId, approved, feedback);
+    const updated = await workflowEngine.resumeWorkflowAfterApproval(req.params.id as string, approvalId, approved, feedback);
     res.json({ success: true, instance: updated });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -145,7 +145,7 @@ router.get('/leads', (req: Request, res: Response) => {
 });
 
 router.get('/leads/:id', (req: Request, res: Response) => {
-  const lead = db.getLeadById(req.params.id);
+  const lead = db.getLeadById(req.params.id as string);
   if (!lead) return res.status(404).json({ success: false, error: 'Lead not found' });
   res.json({ success: true, lead });
 });
@@ -162,7 +162,7 @@ router.post('/leads', (req: Request, res: Response) => {
 
 router.delete('/leads/:id', (req: Request, res: Response) => {
   try {
-    const ok = db.deleteLead(req.params.id);
+    const ok = db.deleteLead(req.params.id as string);
     res.json({ success: ok });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -192,7 +192,7 @@ router.post('/approvals/:id/action', async (req: Request, res: Response) => {
     };
 
     const targetStatus = statusMap[action] || 'APPROVED';
-    const updated = db.updateApprovalStatus(req.params.id, targetStatus, comment, modifiedContent);
+    const updated = db.updateApprovalStatus(req.params.id as string, targetStatus, comment, modifiedContent);
 
     if (!updated) {
       return res.status(404).json({ success: false, error: 'Approval item not found' });
@@ -227,7 +227,7 @@ router.get('/knowledge', (_req: Request, res: Response) => {
 });
 
 router.get('/knowledge/:slug', (req: Request, res: Response) => {
-  const doc = knowledgeService.getBySlug(req.params.slug);
+  const doc = knowledgeService.getBySlug(req.params.slug as string);
   if (!doc) return res.status(404).json({ success: false, error: 'Knowledge document not found' });
   res.json({ success: true, document: doc });
 });
@@ -236,7 +236,7 @@ router.post('/knowledge/:slug', (req: Request, res: Response) => {
   try {
     const { content } = req.body;
     if (!content) return res.status(400).json({ success: false, error: 'Content required' });
-    const saved = knowledgeService.saveDocument(req.params.slug, content);
+    const saved = knowledgeService.saveDocument(req.params.slug as string, content);
     logger.info(`Knowledge document updated: ${saved.title} (${saved.slug})`);
     res.json({ success: true, document: saved });
   } catch (err: any) {
@@ -341,7 +341,7 @@ router.post('/research/run', async (req: Request, res: Response) => {
 
 router.get('/research/runs/:leadId', (req: Request, res: Response) => {
   try {
-    const runs = db.getResearchRuns(req.params.leadId);
+    const runs = db.getResearchRuns(req.params.leadId as string);
     res.json({ success: true, runs });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -350,7 +350,7 @@ router.get('/research/runs/:leadId', (req: Request, res: Response) => {
 
 router.get('/research/profile/:leadId', (req: Request, res: Response) => {
   try {
-    const lead = db.getLeadById(req.params.leadId);
+    const lead = db.getLeadById(req.params.leadId as string);
     if (!lead || !lead.intelligenceProfile) {
       return res.status(404).json({ success: false, error: 'Lead intelligence profile not found' });
     }
@@ -439,7 +439,7 @@ router.get('/audit', (req: Request, res: Response) => {
 
 router.get('/audit/:id', (req: Request, res: Response) => {
   try {
-    const audit = db.getAuditById(req.params.id);
+    const audit = db.getAuditById(req.params.id as string);
     if (!audit) return res.status(404).json({ success: false, error: 'Audit not found' });
     res.json({ success: true, audit });
   } catch (err: any) {
@@ -461,7 +461,7 @@ router.get('/menus', (_req: Request, res: Response) => {
 
 router.get('/menus/:slug', (req: Request, res: Response) => {
   try {
-    const restaurant = db.getRestaurantBySlug(req.params.slug);
+    const restaurant = db.getRestaurantBySlug(req.params.slug as string);
     if (!restaurant) return res.status(404).json({ success: false, error: 'Restaurant not found' });
     res.json({ success: true, restaurant });
   } catch (err: any) {
@@ -473,7 +473,7 @@ router.get('/menus/:slug/qr', async (req: Request, res: Response) => {
   try {
     const { QrMenuEngine } = await import('../core/growth/qr-menu.engine');
     const { siteConfig } = await import('../core/growth/site.config');
-    const publicUrl = `${siteConfig.url}/qr-menu/${req.params.slug}`;
+    const publicUrl = `${siteConfig.url}/qr-menu/${req.params.slug as string}`;
     const svg = QrMenuEngine.generateQrCodeSvg(publicUrl, 280);
     res.setHeader('Content-Type', 'image/svg+xml');
     res.setHeader('Cache-Control', 'public, max-age=86400');
@@ -548,7 +548,7 @@ router.post('/menus', async (req: Request, res: Response) => {
 
 router.post('/menus/:slug/categories', (req: Request, res: Response) => {
   try {
-    const restaurant = db.getRestaurantBySlug(req.params.slug);
+    const restaurant = db.getRestaurantBySlug(req.params.slug as string);
     if (!restaurant) return res.status(404).json({ success: false, error: 'Restaurant not found' });
     const { name, sortOrder } = req.body;
     const cat = db.saveCategory({ restaurantId: restaurant.id, name, sortOrder });
@@ -560,7 +560,7 @@ router.post('/menus/:slug/categories', (req: Request, res: Response) => {
 
 router.post('/menus/:slug/items', (req: Request, res: Response) => {
   try {
-    const restaurant = db.getRestaurantBySlug(req.params.slug);
+    const restaurant = db.getRestaurantBySlug(req.params.slug as string);
     if (!restaurant) return res.status(404).json({ success: false, error: 'Restaurant not found' });
     const { categoryId, name, description, price, imageUrl, isAvailable, isVegetarian, sortOrder, id } = req.body;
     const item = db.saveMenuItem({
@@ -583,7 +583,7 @@ router.post('/menus/:slug/items', (req: Request, res: Response) => {
 
 router.delete('/menus/categories/:id', (req: Request, res: Response) => {
   try {
-    const ok = db.deleteCategory(req.params.id);
+    const ok = db.deleteCategory(req.params.id as string);
     res.json({ success: ok });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -592,7 +592,7 @@ router.delete('/menus/categories/:id', (req: Request, res: Response) => {
 
 router.delete('/menus/items/:id', (req: Request, res: Response) => {
   try {
-    const ok = db.deleteMenuItem(req.params.id);
+    const ok = db.deleteMenuItem(req.params.id as string);
     res.json({ success: ok });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -613,7 +613,7 @@ router.get('/referrals', (_req: Request, res: Response) => {
 
 router.get('/referrals/:code', (req: Request, res: Response) => {
   try {
-    const ref = db.getReferralByCode(req.params.code);
+    const ref = db.getReferralByCode(req.params.code as string);
     if (!ref) return res.status(404).json({ success: false, error: 'Referral code not found' });
     res.json({ success: true, referral: ref });
   } catch (err: any) {
@@ -640,9 +640,9 @@ router.post('/referrals', async (req: Request, res: Response) => {
 
 router.post('/referrals/:code/track', async (req: Request, res: Response) => {
   try {
-    const ok = db.trackReferralClick(req.params.code);
+    const ok = db.trackReferralClick(req.params.code as string);
     const { EventService } = await import('../core/growth/event.service');
-    EventService.getInstance().logEvent('referral_clicked', { metadata: { code: req.params.code } });
+    EventService.getInstance().logEvent('referral_clicked', { metadata: { code: req.params.code as string } });
     res.json({ success: ok });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

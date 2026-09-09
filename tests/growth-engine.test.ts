@@ -167,6 +167,8 @@ describe('PrimeSoul Growth Engine V1 Core Suite', () => {
         websiteUrl: 'https://stxavier-indore.edu',
         score: 68,
         resultsJson: {
+          score: 68,
+          grade: 'Good',
           overallScore: 68,
           healthGrade: 'GOOD',
           summary: 'Good digital baseline',
@@ -175,7 +177,7 @@ describe('PrimeSoul Growth Engine V1 Core Suite', () => {
           opportunities: ['Add Online Admission Enquiry Flow'],
           checks: [],
           recommendedActions: ['PrimeSoul WhatsApp Integration'],
-        },
+        } as any,
       });
 
       expect(audit.id).toBeDefined();

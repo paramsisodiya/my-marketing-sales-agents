@@ -49,7 +49,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       sub: `${qualifiedLeads.length} Qualified in Pipeline`,
       icon: <Users size={22} color="var(--cyan)" />,
       borderColor: 'var(--cyan)',
-      action: () => setActiveTab('leads')
+      action: () => setActiveTab('growth_leads')
     },
     {
       title: 'Pending Human Approvals',
@@ -74,7 +74,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       sub: 'Digital presence & ICP match',
       icon: <TrendingUp size={22} color="var(--emerald)" />,
       borderColor: 'var(--emerald)',
-      action: () => setActiveTab('leads')
+      action: () => setActiveTab('growth_leads')
     },
   ];
 
@@ -173,7 +173,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <Users size={18} color="var(--cyan)" />
               <span>High-Priority Lead Pipeline</span>
             </h3>
-            <button onClick={() => setActiveTab('leads')} className="btn btn-secondary btn-sm">
+            <button onClick={() => setActiveTab('growth_leads')} className="btn btn-secondary btn-sm">
               <span>View All</span>
               <ArrowUpRight size={14} />
             </button>
